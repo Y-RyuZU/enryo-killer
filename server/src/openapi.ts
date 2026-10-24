@@ -6,7 +6,7 @@ export const openapi = {
   openapi: "3.0.3",
   info: {
     title: "遠慮の塊 解消マシン API",
-    version: "0.3.0",
+    version: "0.4.0",
     description: [
       "## ESP32 (タイヤロボ) WebSocket",
       "`wss://<host>/api/rooms/{code}/device/ws` に接続すると、サーバーから次の JSON が push されます:",
@@ -156,6 +156,43 @@ export const openapi = {
     },
   },
 };
+
+// ===== ゲームルール + params REST (追記) =====
+openapi.info.description += "\n\n" + [
+  "## ゲームルール (params。/host の「ゲームルール」カード / `PUT /api/rooms/{code}/params` / config WS で変更)",
+  "- **ひも切れ** `snapEnabled` (0/1, 既定 1): 引く力 >= `snapPower` (既定 0.9) を `snapHoldMs` (既定 800ms) 続けると切れる。`snapLeadMargin` > 0 なら「他の席の最大より margin 以上強い」(1 人だけ突出) ときだけ。切れたら `snapRecoverMs` (既定 3000ms) の間その席の力は 0、張力も即 0",
+  "- **旋回ロック** `turnLockEnabled` (0/1, 既定 1): mode A の対戦中、ESP32 へ turn_right/turn_left を出し始めたら `turnLockMs` の間 全員の引っ張りを無視し張力を凍結 (旋回をやり切る)。`turnLockMs`=0 (既定) は自動 = 必要な旋回角 ÷ `turnRateDegPerSec` (300..5000ms)",
+  "- **引っ張りクールタイム** `pullCooldownEnabled` (0/1, 既定 1): 1 回引いて離して (power <= 0.05) から `pullCooldownMs` (既定 300ms) の間、次の引っ張りは 0 扱い",
+  "- 状態は snapshot の `mech`: `seats[席] = {snapped, snapRemainMs, cooldownRemainMs, overMs}`, `turnLock = {remainMs, durationMs, dir} | null`, `events` (viewer のみ: snap / restore / turnlock_start / turnlock_end)",
+].join("\n");
+const paramProps = {
+  maxSpeed: { type: "number", default: 0.08 }, gain: { type: "number", default: 2 }, decay: { type: "number", default: 0.8 },
+  tieMargin: { type: "number", default: 0.05 }, winRadius: { type: "number", default: 0.35 },
+  turnRateDegPerSec: { type: "number", default: 90 }, imuMaxAgeMs: { type: "number", default: 1500 }, imuBlend: { type: "number", default: 1 },
+  speedOut: { type: "number", enum: [0, 1], default: 0 }, minSpeedOut: { type: "number", default: 0.35 },
+  snapEnabled: { type: "number", enum: [0, 1], default: 1, description: "ひも切れ ON/OFF (true/false も可)" },
+  snapPower: { type: "number", minimum: 0.05, maximum: 1, default: 0.9, description: "この強さ以上で引き続けると切れる" },
+  snapHoldMs: { type: "number", minimum: 0, maximum: 10000, default: 800, description: "snapPower 以上をこの時間続けたら切れる (0=即)" },
+  snapLeadMargin: { type: "number", minimum: 0, maximum: 1, default: 0, description: ">0 なら他の席の最大よりこれ以上強いときだけ切れる" },
+  snapRecoverMs: { type: "number", minimum: 0, maximum: 60000, default: 3000, description: "切れてから復活まで" },
+  turnLockEnabled: { type: "number", enum: [0, 1], default: 1, description: "旋回ロック ON/OFF" },
+  turnLockMs: { type: "number", minimum: 0, maximum: 10000, default: 0, description: "旋回ロックの長さ。0=自動 (旋回角 ÷ turnRateDegPerSec)" },
+  pullCooldownEnabled: { type: "number", enum: [0, 1], default: 1, description: "引っ張りクールタイム ON/OFF" },
+  pullCooldownMs: { type: "number", minimum: 0, maximum: 10000, default: 300, description: "離してから次の引っ張りが効くまで" },
+};
+const paramsRes = { description: "現在の params / 既定値 / 許容範囲", content: { "application/json": { example: { ok: true, params: { snapEnabled: 1, snapPower: 0.9, snapHoldMs: 800, snapLeadMargin: 0, snapRecoverMs: 3000, turnLockEnabled: 1, turnLockMs: 0, pullCooldownEnabled: 1, pullCooldownMs: 300 }, defaults: {}, ranges: {} } } } };
+Object.assign(openapi.paths, {
+  "/api/rooms/{code}/params": {
+    get: { summary: "params (係数 + ゲームルール) を取得", parameters: [room], responses: { 200: paramsRes } },
+    put: {
+      summary: "params を部分更新 (ゲームルールの調整など)",
+      description: "送ったキーだけ更新 (範囲外は clamp)。`{\"params\": {...}}` でも直接 `{...}` でも OK。`{\"reset\": true}` で既定値に戻す (turnRateDegPerSec は保持)。未知キー / 数値でない値は 400。永続化され、全画面に即反映",
+      parameters: [room],
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: paramProps }, example: { snapPower: 0.85, snapRecoverMs: 4000, turnLockMs: 1500, pullCooldownMs: 250 } } } },
+      responses: { 200: paramsRes, 400: { description: "未知キー / 数値でない" } },
+    },
+  },
+});
 
 // ===== Plan B: 磁石 XY (追記) =====
 openapi.info.description += "\n\n" + [

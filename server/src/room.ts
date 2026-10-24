@@ -3,7 +3,8 @@ import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snap
 import type { DeviceWsMsg } from "./shared";
 import { PULL_STALE_MS, clamp, deviceCmd, moveCommand, step, fuseHeading, imuHeading, imuOffsetFor, wrap360, turnRateFrom, parseSpeed } from "./logic";
 import { xyMsg } from "./logic";
-import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg } from "./shared";
+import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg, PARAM_RANGES, MechView } from "./shared";
+import { SeatMech, MechEvent, freshMech, applyPull, restoreIfDue, turnLockDuration, turnLockStarts, mergeParams } from "./mechanics";
 
 type Player = { playerId: string; name: string; seat: Seat };
 type Persisted = {
@@ -68,6 +69,12 @@ export class RoomDO extends DurableObject<Env> {
   calib: CalibState | null = null;
   calibSeq = 0;
   calibTimer: ReturnType<typeof setTimeout> | null = null;
+  // ゲームルール (ひも切れ / 旋回ロック / クールタイム)
+  mech: Partial<Record<Seat, SeatMech>> = {};
+  turnLock: { until: number; durationMs: number; dir: TurnDir } | null = null;
+  mechEvents: MechEvent[] = [];
+  mechSeq = 0;
+  mechTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -151,6 +158,7 @@ export class RoomDO extends DurableObject<Env> {
       return Response.json({ ok: true });
     }
     if (path.endsWith("/state")) return Response.json(this.snapshot());
+    if (path.endsWith("/params")) return this.paramsApi(req);
     return new Response("not found", { status: 404 });
   }
 
@@ -186,8 +194,7 @@ export class RoomDO extends DurableObject<Env> {
       case "pull": {
         const seat = this.seatOf(att.playerId);
         if (!seat) return;
-        this.powers[seat] = { power: clamp(Number(msg.power) || 0, 0, 1), at: Date.now() };
-        return;
+        return this.onPull(seat, clamp(Number(msg.power) || 0, 0, 1));
       }
       case "host":
         await this.host(msg.cmd);
@@ -195,9 +202,9 @@ export class RoomDO extends DurableObject<Env> {
       case "config": {
         if (msg.mode && ["A", "B", "C"].includes(msg.mode)) { this.s.mode = msg.mode; this.autoDevice(); }
         if (msg.params) {
-          for (const [k, v] of Object.entries(msg.params)) {
-            if (k in DEFAULT_PARAMS && typeof v === "number" && isFinite(v)) (this.s.params as any)[k] = v;
-          }
+          const ok: Record<string, number> = {};
+          for (const [k, v] of Object.entries(msg.params)) if (k in DEFAULT_PARAMS && typeof v === "number" && isFinite(v)) ok[k] = v;
+          this.s.params = mergeParams(this.s.params, ok, DEFAULT_PARAMS, PARAM_RANGES).params;
         }
         if (msg.zeroImu) this.imuZeroPending = true;
         await this.save();
@@ -217,13 +224,16 @@ export class RoomDO extends DurableObject<Env> {
       if (this.s.estop) return this.broadcast();
       if (this.s.phase !== "playing") {
         if (this.s.phase === "finished") this.resetGame();
+        this.resetMech();
         this.s.phase = "playing";
         await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
       }
     } else if (cmd === "stop") {
       this.s.phase = "lobby";
       this.leaderSeat = null;
+      this.endTurnLock();
     } else if (cmd === "estop") {
+      this.endTurnLock();
       if (this.calib?.state === "spinning") { this.clearCalibTimer(); this.calib = { ...this.calib, state: "failed", err: "estop" }; }
       this.s.estop = true;
       this.s.phase = "lobby";
@@ -248,17 +258,23 @@ export class RoomDO extends DurableObject<Env> {
     this.leaderSeat = null;
     this.tick = 0;
     this.headingSource = "dr";
+    this.resetMech();
     this.imuZeroPending = true; // リセット時は「皿は N 向きに置き直した」とみなし、次の IMU 報告で基準を取り直す
   }
 
   async alarm() {
     if (this.s.phase !== "playing" || this.s.estop) return;
     const now = Date.now();
+    this.mechTick(now);
+    const locked = !!this.turnLock;
     const powers: Partial<Record<Seat, number>> = {};
     for (const s of SEATS) {
       if (!this.s.seats[s]) continue;
       const p = this.powers[s];
-      powers[s] = p && now - p.at < PULL_STALE_MS ? p.power : 0;
+      // 旋回ロック中は引っ張りを無視して張力を凍結 (= 旋回を最後までやり切る)。切れている席は 0
+      if (locked) powers[s] = this.tensions[s] ?? 0;
+      else powers[s] = p && now - p.at < PULL_STALE_MS ? p.power : 0;
+      if ((this.mech[s]?.snappedUntil ?? 0) > now) powers[s] = 0;
     }
     const out = step({
       powers, tensions: this.tensions, plate: this.s.plate, params: this.s.params, dt: TICK_MS / 1000,
@@ -270,8 +286,11 @@ export class RoomDO extends DurableObject<Env> {
     this.s.plate = out.plate;
     this.leaderSeat = out.leaderSeat;
     this.targetDirDeg = out.targetDirDeg;
+    const prevPayload = this.devicePayload;
     this.autoDevice();
+    this.maybeStartTurnLock(prevPayload, now);
     if (out.winnerSeat) {
+      this.endTurnLock();
       this.s.winnerSeat = out.winnerSeat;
       this.s.phase = "finished";
       this.leaderSeat = null;
@@ -282,6 +301,118 @@ export class RoomDO extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(now + TICK_MS);
     }
     this.broadcast();
+  }
+
+  // ---------- ゲームルール (ひも切れ / 旋回ロック / 引っ張りクールタイム) ----------
+  onPull(seat: Seat, power: number) {
+    const now = Date.now();
+    if (this.s.phase !== "playing" || this.s.estop) { this.powers[seat] = { power, at: now }; return; }
+    if (this.turnLock) {
+      if (now < this.turnLock.until) return; // 旋回中は誰も引けない (無視)
+      this.mechTick(now);
+    }
+    let othersMax = 0;
+    for (const s of SEATS) if (s !== seat && this.s.seats[s]) othersMax = Math.max(othersMax, this.powers[s]?.power ?? 0);
+    const r = applyPull(this.mech[seat] ?? freshMech(), power, now, this.s.params, othersMax);
+    this.mech[seat] = r.mech;
+    this.powers[seat] = { power: r.effective, at: now };
+    if (r.restored) this.pushMech({ kind: "restore", seat });
+    if (r.snapped) {
+      this.tensions[seat] = 0; // ひもが切れた = その席の力はすぐ 0
+      this.pushMech({ kind: "snap", seat, durationMs: this.s.params.snapRecoverMs });
+      this.scheduleMechWake(this.s.params.snapRecoverMs);
+    }
+    if (r.restored || r.snapped) this.broadcast();
+  }
+
+  /** 復活 / ロック解除の判定 (tick と pull から) */
+  mechTick(now: number) {
+    let changed = false;
+    for (const s of SEATS) {
+      const m = this.mech[s];
+      if (!m) continue;
+      const r = restoreIfDue(m, now);
+      if (r.restored) { this.mech[s] = r.mech; this.pushMech({ kind: "restore", seat: s }); changed = true; }
+    }
+    if (this.turnLock && now >= this.turnLock.until) { this.endTurnLock(); changed = true; }
+    return changed;
+  }
+
+  maybeStartTurnLock(prevPayload: MovePayload | null, now: number) {
+    const p = this.s.params;
+    if (this.turnLock || (p.turnLockEnabled ?? 0) < 0.5 || this.s.mode !== "A" || this.s.phase !== "playing" || this.s.estop) return;
+    if (Date.now() < this.manualUntil || this.calib?.state === "spinning") return;
+    const dir = turnLockStarts(prevPayload, this.devicePayload ?? "stop");
+    if (!dir) return;
+    const dh = this.targetDirDeg == null ? 90 : ((((this.targetDirDeg - this.livePlate().headingDeg + 180) % 360) + 360) % 360) - 180;
+    const durationMs = turnLockDuration(p, dh);
+    this.turnLock = { until: now + durationMs, durationMs, dir };
+    this.pushMech({ kind: "turnlock_start", durationMs, dir });
+    this.scheduleMechWake(durationMs);
+  }
+
+  endTurnLock() {
+    if (!this.turnLock) return;
+    this.turnLock = null;
+    this.pushMech({ kind: "turnlock_end" });
+  }
+
+  resetMech() {
+    this.mech = {};
+    this.turnLock = null;
+    if (this.mechTimer) clearTimeout(this.mechTimer);
+    this.mechTimer = null;
+  }
+
+  pushMech(e: Omit<MechEvent, "id" | "at">) {
+    this.mechEvents.push({ id: ++this.mechSeq, at: Date.now(), ...e });
+    if (this.mechEvents.length > 30) this.mechEvents.splice(0, this.mechEvents.length - 30);
+  }
+
+  /** 復活 / ロック解除の瞬間に画面を更新 (tick を待たない) */
+  scheduleMechWake(ms: number) {
+    if (this.mechTimer) clearTimeout(this.mechTimer);
+    const at = Math.min(...[ms, ...Object.values(this.mech).map((m) => (m!.snappedUntil > 0 ? m!.snappedUntil - Date.now() : Infinity)), this.turnLock ? this.turnLock.until - Date.now() : Infinity]);
+    this.mechTimer = setTimeout(() => {
+      this.mechTimer = null;
+      if (this.mechTick(Date.now())) this.broadcast();
+      const pending = Object.values(this.mech).some((m) => m!.snappedUntil > 0) || !!this.turnLock;
+      if (pending) this.scheduleMechWake(5000);
+    }, Math.max(20, at + 10));
+  }
+
+  mechView(viewer: boolean): MechView {
+    const now = Date.now();
+    const seats: MechView["seats"] = {};
+    for (const s of SEATS) {
+      if (!this.s.seats[s]) continue;
+      const m = this.mech[s] ?? freshMech();
+      const snapped = m.snappedUntil > now;
+      seats[s] = {
+        snapped,
+        snapRemainMs: snapped ? m.snappedUntil - now : 0,
+        cooldownRemainMs: !snapped && !m.pulling && m.cooldownUntil > now ? m.cooldownUntil - now : 0,
+        overMs: m.overSince != null ? now - m.overSince : 0,
+      };
+    }
+    const tl = this.turnLock && this.turnLock.until > now ? { remainMs: this.turnLock.until - now, durationMs: this.turnLock.durationMs, dir: this.turnLock.dir } : null;
+    return { seats, turnLock: tl, ...(viewer ? { events: this.mechEvents } : {}) };
+  }
+
+  // ---------- REST: params ----------
+  async paramsApi(req: Request): Promise<Response> {
+    const res = (extra: object = {}, status = 200) => Response.json({ ok: status < 300, params: this.s.params, defaults: DEFAULT_PARAMS, ranges: PARAM_RANGES, ...extra }, { status });
+    if (req.method === "GET") return res();
+    if (req.method !== "PUT" && req.method !== "PATCH" && req.method !== "POST") return new Response("method not allowed", { status: 405 });
+    const body = await readJson(req);
+    const patch = body && typeof body === "object" ? (body.params && typeof body.params === "object" ? body.params : body) : {};
+    if (body?.reset === true) this.s.params = { ...DEFAULT_PARAMS, turnRateDegPerSec: this.s.params.turnRateDegPerSec };
+    const { params, errors } = mergeParams(this.s.params, body?.reset === true ? {} : patch, DEFAULT_PARAMS, PARAM_RANGES);
+    if (errors.length) return res({ errors }, 400);
+    this.s.params = params;
+    await this.save();
+    this.broadcast();
+    return res();
   }
 
   // ---------- helpers ----------
@@ -335,6 +466,7 @@ export class RoomDO extends DurableObject<Env> {
       deviceImu: this.imuView(),
       headingSource: this.headingSource,
       calib: this.calib,
+      mech: this.mechView(viewer),
       ...(viewer ? { lastDevice: this.lastDevice } : {}),
     };
     if (forPlayer !== undefined) {

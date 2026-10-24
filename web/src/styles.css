@@ -240,3 +240,28 @@ details.hd-card[open] > summary { margin-bottom: 8px; }
 .hd-calib-row select, .hd-calib-row input { background: #1f1712; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
 .hd-calib-row .hd-btn { padding: 8px 12px; font-size: 15px; }
 .hd-calib-st { font-size: 13px; color: var(--gold); margin-bottom: 4px; }
+
+/* ===== ゲームルール: ひも切れ / 旋回ロック / クールタイム ===== */
+.mech-banner { align-self: center; margin-top: 8px; padding: 8px 18px; border-radius: 12px; font-weight: 800; font-size: 20px; text-align: center; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
+.mech-banner b { font-size: 26px; }
+.mech-banner.snapped { background: #4a1a16; color: #ffd1cc; border: 2px solid var(--red); animation: pulse 1s infinite; }
+.mech-banner.turning { background: #1d3446; color: #bfe6ff; border: 2px solid #4fa3d9; }
+.mech-banner.turning b { font-size: 18px; }
+.mech-banner.cooldown { background: #2e2a1d; color: var(--gold); border: 2px solid #6b5a22; font-size: 16px; }
+.mech-banner.danger { background: #5a3a10; color: #ffd27a; border: 2px solid #e8a33a; font-size: 18px; }
+.rope-screen.is-snapped { background: radial-gradient(circle at 50% 100%, #5a1e1a 0%, transparent 70%); }
+.rope-screen.is-turning { background: radial-gradient(circle at 50% 100%, #1d3446 0%, transparent 70%); }
+.gauge.off { opacity: 0.4; filter: grayscale(1); }
+.gauge.danger .gauge-fill { background: #e8a33a; }
+/* host */
+.hd-tag.snap { background: var(--red); color: #fff; animation: pulse 1s infinite; }
+.hd-tag.cool { background: #6b5a22; color: var(--gold); }
+.hd-tag.over { background: #e8a33a; color: #000; }
+.hd-turnlock { margin-top: 6px; padding: 6px 10px; border-radius: 8px; font-weight: 800; background: #1d3446; color: #bfe6ff; border: 1px solid #4fa3d9; }
+.hd-turnlock.idle { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 400; }
+.hd-seat.snapped { border-color: var(--red); }
+.hd-rule { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.hd-rule-head { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+.hd-rule-head small { font-weight: 400; color: var(--muted); }
+.hd-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.lk-rule { color: #ffcf8a; }

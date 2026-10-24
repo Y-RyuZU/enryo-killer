@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { SEATS, SEAT_LABEL, Seat, Snapshot, getPlayerId, sanitizeCode, useRoom } from "./api";
+import { SEATS, SEAT_LABEL, Seat, Snapshot, getPlayerId, sanitizeCode, secs, useNowSince, useRoom } from "./api";
 import { Karaage } from "./Karaage";
 
 const NAMES = ["からあげ太郎", "遠慮さん", "最後の一個", "レモン派", "マヨ派", "渋い人"];
@@ -102,9 +102,19 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
   const handleY = 300 + drag;
   const shake = power > 0.6 ? (Math.random() - 0.5) * power * 6 : 0;
   const winner = snap.winnerSeat ? snap.seats[snap.winnerSeat] : undefined;
+  // ゲームルール: ひも切れ / 旋回ロック / クールタイム
+  const left = useNowSince(snap);
+  const mm = snap.phase === "playing" ? snap.mech?.seats[seat] : undefined;
+  const snapLeft = mm?.snapped ? left(mm.snapRemainMs) : 0;
+  const snapped = snapLeft > 0;
+  const turnLeft = snap.phase === "playing" ? left(snap.mech?.turnLock?.remainMs) : 0;
+  const turning = turnLeft > 0;
+  const cdLeft = left(mm?.cooldownRemainMs);
+  const cooling = !snapped && !turning && cdLeft > 0;
+  const danger = !snapped && (mm?.overMs ?? 0) > 0; // 強く引きすぎ (このままだと切れる)
 
   return (
-    <div className={`m-screen rope-screen st-${status}`}>
+    <div className={`m-screen rope-screen st-${status} ${snapped ? "is-snapped" : ""} ${turning ? "is-turning" : ""}`}>
       <div className="rope-top">
         <div>
           <div className="seat-chip" onClick={onTitleClick}>{title ?? `${SEAT_LABEL[seat]}の席`}・{snap.seats[seat]?.name}</div>
@@ -113,6 +123,15 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
         <MiniMap snap={snap} seat={seat} />
       </div>
       <div className={`status-pill ${status}`}>{statusText}</div>
+      {snapped ? (
+        <div className="mech-banner snapped">✂ ひもが切れた！<b>復活まで {secs(snapLeft)}s</b></div>
+      ) : turning ? (
+        <div className="mech-banner turning">↻ 旋回中… <b>いまは引けない</b></div>
+      ) : cooling ? (
+        <div className="mech-banner cooldown">クールタイム…</div>
+      ) : danger ? (
+        <div className="mech-banner danger">⚠ 引きすぎ！ 切れるよ</div>
+      ) : null}
 
       <svg ref={svgRef} className="rope-svg" viewBox="0 0 200 640" preserveAspectRatio="xMidYMin meet"
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
@@ -123,18 +142,26 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
           </pattern>
         </defs>
         <rect x="70" y="0" width="60" height="18" rx="4" fill="#3b2a1e" />
-        <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" />
+        {snapped ? (
+          <>
+            <path d="M100 18 L 96 150 L 104 165" stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" />
+            <path d={`M104 210 L 98 222 L ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" opacity="0.55" />
+            <text x="100" y="196" textAnchor="middle" fontSize="34">✂</text>
+          </>
+        ) : (
+          <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" />
+        )}
         <g transform={`translate(${100 + shake / 2} ${handleY})`} style={{ cursor: "grab" }}>
           <rect x="-46" y="-6" width="92" height="30" rx="15" fill="#5a3a22" stroke="#2a1a10" strokeWidth="3" />
           <rect x="-40" y="0" width="80" height="6" rx="3" fill="#7a5232" />
           <circle r="34" fill="transparent" />
         </g>
-        {drag === 0 && snap.phase === "playing" && (
+        {drag === 0 && snap.phase === "playing" && !snapped && !turning && (
           <text x="100" y={handleY + 70} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
         )}
       </svg>
 
-      <div className="gauge"><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%</span></div>
+      <div className={`gauge ${snapped || turning || cooling ? "off" : ""} ${danger ? "danger" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : cooling ? "（クールタイム）" : ""}</span></div>
 
       {snap.phase === "finished" && (
         <div className="overlay">

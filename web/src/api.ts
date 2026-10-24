@@ -152,3 +152,18 @@ export function useBot(code: string, seat: Seat, enabled: boolean, power: number
     };
   }, [code, seat, enabled]);
 }
+
+/** サーバーの残り ms (snapshot 受信時点) をローカルで減らしていく。snap が変わるたびに基準を取り直す */
+export function useNowSince(snap: Snapshot | null, intervalMs = 200) {
+  const recvAt = useRef(Date.now());
+  const lastSnap = useRef<Snapshot | null>(null);
+  if (lastSnap.current !== snap) { lastSnap.current = snap; recvAt.current = Date.now(); }
+  const [, setT] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setT((x) => x + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  /** 受信時の残り ms -> 今の残り ms */
+  return (remainMs: number | undefined | null) => Math.max(0, (remainMs ?? 0) - (Date.now() - recvAt.current));
+}
+export const secs = (ms: number) => Math.ceil(ms / 1000);

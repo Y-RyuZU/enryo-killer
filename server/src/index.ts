@@ -41,7 +41,7 @@ app.get("/api/openapi.json", (c) => c.json(openapi));
 app.get("/api/docs", (c) => c.html(swaggerHtml));
 
 // WS / device poll / estop / state は全部 RoomDO へ転送
-app.all("/api/rooms/:code/:action{ws|device|estop|state}", async (c) => {
+app.all("/api/rooms/:code/:action{ws|device|estop|state|params}", async (c) => {
   const code = norm(c.req.param("code"));
   if (!code) return c.text("bad code", 400);
   const url = new URL(c.req.url);

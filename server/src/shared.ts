@@ -17,10 +17,38 @@ export type Params = {
   imuBlend: number; // 0..1  0=IMU 無視, 1=IMU で上書き
   speedOut: number; // 0/1  1 なら tick 駆動の push に speed を付ける (0=従来と同一バイト列)
   minSpeedOut: number; // speedOut=1 時の forward/backward の下限 (0..1, モーターが止まらない値)
+  // --- ゲームルール (enable は 0/1。全部 number なので config WS / PUT /params でそのまま変更可) ---
+  snapEnabled: number; // 0/1 ひも切れ
+  snapPower: number; // 0..1 これ以上の強さで引き続けると切れる
+  snapHoldMs: number; // snapPower 以上をこの時間続けたら切れる (0 = 即)
+  snapLeadMargin: number; // 0..1  >0 なら「他の席の最大より これ以上強い」(1 人だけ突出) ときだけ切れる。0 = 無条件
+  snapRecoverMs: number; // 切れてから復活までの時間
+  turnLockEnabled: number; // 0/1 旋回中は誰も引けない (mode A)
+  turnLockMs: number; // 旋回ロックの長さ。0 = 自動 (必要な旋回角 ÷ turnRateDegPerSec, 300..5000ms)
+  pullCooldownEnabled: number; // 0/1 引っ張りクールタイム
+  pullCooldownMs: number; // 1 回引いて離してから、次の引っ張りが効くまでの時間
 };
 export const DEFAULT_PARAMS: Params = {
   maxSpeed: 0.08, gain: 2, decay: 0.8, tieMargin: 0.05, winRadius: 0.35,
   turnRateDegPerSec: 90, imuMaxAgeMs: 1500, imuBlend: 1, speedOut: 0, minSpeedOut: 0.35,
+  snapEnabled: 1, snapPower: 0.9, snapHoldMs: 800, snapLeadMargin: 0, snapRecoverMs: 3000,
+  turnLockEnabled: 1, turnLockMs: 0,
+  pullCooldownEnabled: 1, pullCooldownMs: 300,
+};
+/** params の許容範囲 (PUT /params と config WS で clamp) */
+export const PARAM_RANGES: Partial<Record<keyof Params, [number, number]>> = {
+  snapEnabled: [0, 1], snapPower: [0.05, 1], snapHoldMs: [0, 10000], snapLeadMargin: [0, 1], snapRecoverMs: [0, 60000],
+  turnLockEnabled: [0, 1], turnLockMs: [0, 10000], pullCooldownEnabled: [0, 1], pullCooldownMs: [0, 10000],
+};
+
+/** 席ごとのルール状態 (残り時間は snapshot 生成時点からの ms) */
+export type SeatMechView = { snapped: boolean; snapRemainMs: number; cooldownRemainMs: number; overMs: number };
+export type TurnLockView = { remainMs: number; durationMs: number; dir: TurnDir };
+export type MechEventView = { id: number; at: number; kind: "snap" | "restore" | "turnlock_start" | "turnlock_end"; seat?: Seat; durationMs?: number; dir?: TurnDir };
+export type MechView = {
+  seats: Partial<Record<Seat, SeatMechView>>;
+  turnLock: TurnLockView | null;
+  events?: MechEventView[]; // viewer のみ: 直近のルールイベント (id 昇順)
 };
 
 export type PlayerView = {
@@ -55,6 +83,7 @@ export type Snapshot = {
   deviceImu?: ImuView | null;
   headingSource?: "imu" | "dr"; // 直近 tick の方位の出どころ
   calib?: CalibState | null;
+  mech?: MechView; // ひも切れ / 旋回ロック / クールタイム
   me?: { playerId: string; seat: Seat | null; tension: number; status: Status };
 };
 

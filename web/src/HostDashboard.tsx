@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEMO_ROOM, MovePayload, Mode, Params, SEATS, SEAT_LABEL, SEAT_LETTER, Seat, Snapshot,
-  hostUrl, kickSeat, roomApi, roomFromUrl, seatTitle, seatUrl, useBot, useRoom,
+  hostUrl, kickSeat, roomApi, roomFromUrl, seatTitle, seatUrl, useBot, useRoom, useNowSince, secs, DEFAULT_PARAMS,
 } from "./api";
 import { Table } from "./Sim";
 import { JoinQR, JoinQROverlay } from "./JoinQR";
@@ -36,7 +36,7 @@ const PAYLOAD_VIEW: Record<MovePayload, { icon: string; label: string }> = {
 };
 const PHASE_LABEL = { lobby: "待機中", playing: "対戦中", finished: "決着" } as const;
 
-type LogItem = { id: number; at: number; kind: "info" | "game" | "device" | "warn" | "host"; text: string };
+type LogItem = { id: number; at: number; kind: "info" | "game" | "device" | "warn" | "host" | "rule"; text: string };
 const hhmmss = (t: number) => new Date(t).toLocaleTimeString("ja-JP", { hour12: false });
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
@@ -62,6 +62,7 @@ function useEventLog(snap: Snapshot | null, connected: boolean) {
   }, []);
   const prev = useRef<Snapshot | null>(null);
   const prevConn = useRef<boolean | null>(null);
+  const lastMechId = useRef<number | null>(null);
 
   useEffect(() => {
     // prevConn: null = まだ一度も繋がっていない
@@ -74,6 +75,21 @@ function useEventLog(snap: Snapshot | null, connected: boolean) {
     if (!snap) return;
     const p = prev.current;
     prev.current = snap;
+    // ルールイベント (ひも切れ / 復活 / 旋回ロック) はサーバーの id 付きリストから。初回は既存分をスキップ
+    const evs = snap.mech?.events ?? [];
+    if (lastMechId.current === null) lastMechId.current = evs.length ? evs[evs.length - 1].id : 0;
+    else {
+      if (evs.length && evs[evs.length - 1].id < lastMechId.current) lastMechId.current = 0; // サーバー再起動
+      for (const e of evs) {
+        if (e.id <= lastMechId.current) continue;
+        lastMechId.current = e.id;
+        const who = e.seat ? `${seatTitle(e.seat)} ${snap.seats[e.seat]?.name ?? ""}` : "";
+        if (e.kind === "snap") add("rule", `✂ ${who} のひもが切れた！ (${((e.durationMs ?? 0) / 1000).toFixed(1)}秒で復活)`);
+        else if (e.kind === "restore") add("rule", `🪢 ${who} のひもが復活`);
+        else if (e.kind === "turnlock_start") add("rule", `↻ 旋回ロック開始 (${e.dir === "left" ? "左" : "右"}旋回 ${e.durationMs}ms 誰も引けない)`);
+        else if (e.kind === "turnlock_end") add("rule", "旋回ロック終了 (引っ張り再開)");
+      }
+    }
     if (!p) {
       add("info", `部屋 ${snap.code}: ${PHASE_LABEL[snap.phase]} / モード ${snap.mode} / ESP32 ${snap.deviceWsCount ?? 0}台`);
       return;
@@ -191,6 +207,7 @@ export function HostDashboard() {
           <section className="hd-col hd-right">
             <GameCard snap={snap} host={host} />
             <ModeCard snap={snap} send={send} add={add} />
+            <RulesCard snap={snap} send={send} add={add} />
             <ManualCard snap={snap} code={code} manual={manual} durRef={durRef} speedRef={speedRef} add={add} />
             <CalibCard snap={snap} code={code} add={add} />
             <ParamsCard snap={snap} send={send} />
@@ -225,12 +242,19 @@ function SeatCard({ seat, snap, code, add, onQr }: { seat: Seat; snap: Snapshot;
   const lead = snap.leaderSeat === seat;
   const win = snap.winnerSeat === seat;
   const url = seatUrl(seat, code);
+  const left = useNowSince(snap);
+  const mm = snap.phase === "playing" ? snap.mech?.seats[seat] : undefined;
+  const snapLeft = mm?.snapped ? left(mm.snapRemainMs) : 0;
+  const cdLeft = left(mm?.cooldownRemainMs);
   return (
-    <div className={`hd-card hd-seat ${p ? "taken" : "empty"} ${lead ? "lead" : ""} ${win ? "win" : ""}`}>
+    <div className={`hd-card hd-seat ${p ? "taken" : "empty"} ${lead ? "lead" : ""} ${win ? "win" : ""} ${snapLeft > 0 ? "snapped" : ""}`}>
       <div className="hd-seat-top">
         <div className="hd-seat-letter">{SEAT_LETTER[seat]}</div>
         <div className="hd-seat-info">
-          <div className="hd-seat-dir">{SEAT_LABEL[seat]}の席 {lead && <span className="hd-tag lead">優勢</span>}{win && <span className="hd-tag win">WIN</span>}</div>
+          <div className="hd-seat-dir">{SEAT_LABEL[seat]}の席 {lead && <span className="hd-tag lead">優勢</span>}{win && <span className="hd-tag win">WIN</span>}
+            {snapLeft > 0 && <span className="hd-tag snap">✂ 切れた {secs(snapLeft)}s</span>}
+            {!snapLeft && cdLeft > 0 && <span className="hd-tag cool">クール {(cdLeft / 1000).toFixed(1)}s</span>}
+            {!snapLeft && (mm?.overMs ?? 0) > 0 && <span className="hd-tag over">引きすぎ {(mm!.overMs / 1000).toFixed(1)}s</span>}</div>
           <div className="hd-seat-name">
             {p ? <><span className={`dot ${p.online ? "on" : ""}`} />{p.name}{!p.online && <small> (オフライン)</small>}</> : <span className="muted">空席 — QR で参加</span>}
           </div>
@@ -339,7 +363,77 @@ function GameCard({ snap, host }: { snap: Snapshot; host: (c: any, l: string) =>
         <button className="hd-btn" onClick={() => host("reset", "リセット")}>↺ リセット</button>
       </div>
       {snap.estop && <div className="hd-warn">緊急停止中: 解除するまで開始・手動操作できません</div>}
+      <TurnLockBadge snap={snap} />
     </div>
+  );
+}
+
+function TurnLockBadge({ snap }: { snap: Snapshot }) {
+  const left = useNowSince(snap);
+  const tl = snap.phase === "playing" ? snap.mech?.turnLock : null;
+  const rem = left(tl?.remainMs);
+  if (!tl || rem <= 0) return <div className="hd-turnlock idle">旋回ロック: なし{snap.params.turnLockEnabled >= 0.5 ? "" : " (無効)"}</div>;
+  return <div className="hd-turnlock">↻ 旋回ロック中 ({tl.dir === "left" ? "左" : "右"}) 残り {(rem / 1000).toFixed(1)}s / {tl.durationMs}ms — 引っ張り無視</div>;
+}
+
+// ---------- ゲームルール (ひも切れ / 旋回ロック / クールタイム) ----------
+type RuleSlider = { k: keyof Params; label: string; min: number; max: number; step: number; fmt?: (v: number) => string };
+const ms = (v: number) => `${v}ms`;
+const RULES: { en: keyof Params; title: string; desc: string; sliders: RuleSlider[] }[] = [
+  {
+    en: "snapEnabled", title: "✂ ひも切れ", desc: "強く引きすぎると切れて、復活まで 0",
+    sliders: [
+      { k: "snapPower", label: "切れる強さ (以上)", min: 0.3, max: 1, step: 0.05, fmt: pct },
+      { k: "snapHoldMs", label: "この時間続けたら切れる", min: 0, max: 3000, step: 100, fmt: ms },
+      { k: "snapLeadMargin", label: "他の人より これ以上強い時だけ (0=無条件)", min: 0, max: 1, step: 0.05, fmt: (v) => (v > 0 ? pct(v) : "無条件") },
+      { k: "snapRecoverMs", label: "復活までの時間", min: 500, max: 15000, step: 500, fmt: ms },
+    ],
+  },
+  {
+    en: "turnLockEnabled", title: "↻ 旋回ロック", desc: "モードAで旋回コマンドを出したら、その間は誰も引けない",
+    sliders: [
+      { k: "turnLockMs", label: "ロック時間 (0=自動: 角度÷旋回速度)", min: 0, max: 5000, step: 100, fmt: (v) => (v > 0 ? ms(v) : "自動") },
+      { k: "turnRateDegPerSec", label: "実機の旋回速度 (自動の計算に使う)", min: 10, max: 360, step: 1, fmt: (v) => `${v}°/s` },
+    ],
+  },
+  {
+    en: "pullCooldownEnabled", title: "⏱ 引っ張りクールタイム", desc: "1回引いて離したら、少しの間 次の引っ張りが効かない",
+    sliders: [{ k: "pullCooldownMs", label: "クールタイム", min: 0, max: 3000, step: 50, fmt: ms }],
+  },
+];
+
+function RulesCard({ snap, send, add }: { snap: Snapshot; send: (m: any) => void; add: (k: LogItem["kind"], t: string) => void }) {
+  const set = (k: keyof Params, v: number) => send({ t: "config", params: { [k]: v } });
+  const resetRules = () => {
+    const keys: (keyof Params)[] = ["snapEnabled", "snapPower", "snapHoldMs", "snapLeadMargin", "snapRecoverMs", "turnLockEnabled", "turnLockMs", "pullCooldownEnabled", "pullCooldownMs"];
+    send({ t: "config", params: Object.fromEntries(keys.map((k) => [k, DEFAULT_PARAMS[k]])) });
+    add("host", "ゲームルールを既定値に戻した");
+  };
+  return (
+    <details className="hd-card hd-rules" open>
+      <summary className="label">ゲームルール (ひも切れ / 旋回ロック / クールタイム)</summary>
+      {RULES.map((r) => {
+        const on = (snap.params[r.en] ?? 0) >= 0.5;
+        return (
+          <div key={r.en} className="hd-rule">
+            <div className="hd-rule-head">
+              <label className="hd-toggle">
+                <input type="checkbox" checked={on} onChange={(e) => { set(r.en, e.target.checked ? 1 : 0); add("host", `${r.title} ${e.target.checked ? "ON" : "OFF"}`); }} />
+                {r.title}
+              </label>
+              <small>{r.desc}</small>
+            </div>
+            {on && r.sliders.map(({ k, label, min, max, step, fmt }) => (
+              <label key={k} className="hd-slider">
+                <span>{label} <b>{fmt ? fmt(snap.params[k]) : snap.params[k]}</b></span>
+                <input type="range" min={min} max={max} step={step} value={snap.params[k]} onChange={(e) => set(k, Number(e.target.value))} />
+              </label>
+            ))}
+          </div>
+        );
+      })}
+      <div className="hd-btns" style={{ marginTop: 8 }}><button className="hd-mini" onClick={resetRules}>ルールを既定値に戻す</button></div>
+    </details>
   );
 }
 
