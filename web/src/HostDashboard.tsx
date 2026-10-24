@@ -212,6 +212,7 @@ export function HostDashboard() {
             <CalibCard snap={snap} code={code} add={add} />
             <ParamsCard snap={snap} send={send} />
             <div className="hd-card hd-links">
+              <a href={`/stage${code === DEMO_ROOM ? "" : `?room=${code}`}`} target="_blank" rel="noreferrer">📽 プロジェクター画面 (/stage)</a>
               <a href={hostUrl(code)} target="_blank" rel="noreferrer">別タブでホスト</a>
               <a href={`/sim${code === DEMO_ROOM ? "" : `?room=${code}`}`} target="_blank" rel="noreferrer">旧シミュレーター</a>
               <a href={`/magnet?room=${code}`} target="_blank" rel="noreferrer">人間磁石</a>

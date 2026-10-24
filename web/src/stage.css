@@ -1,0 +1,37 @@
+/* ---------- /stage プロジェクター画面 ---------- */
+.stg { position: fixed; inset: 0; overflow: hidden; background: #000; color: #fff; display: grid; place-items: center; cursor: none; }
+.stg-svg { width: 100vw; height: 100vh; display: block; }
+.stg-loading { font-size: 5vh; color: #ccc; }
+.stg-svg text { font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif; font-weight: 800; }
+.stg-phase { font-size: 0.3px; fill: #fff; }
+.stg-phase.playing { fill: #7dff8a; }
+.stg-phase.finished { fill: #ffd23f; }
+.stg-timer { font-size: 0.44px; fill: #fff; font-variant-numeric: tabular-nums; }
+.stg-mode-cap { font-size: 0.13px; fill: #aaa; letter-spacing: 0.02px; }
+.stg-mode { font-size: 0.3px; fill: #4fd1ff; }
+.stg-title { font-size: 0.2px; fill: #e0b56f; }
+.stg-force { font-size: 0.2px; fill: #fff; }
+.stg-banner { font-size: 0.17px; fill: #fff; }
+.stg-seat-dir { font-size: 0.17px; }
+.stg-seat-tag { font-size: 0.13px; }
+.stg-seat-name { font-size: 0.17px; fill: #fff; }
+.stg-seat-name.big { font-size: 0.26px; }
+.stg-seat-pct { font-size: 0.15px; fill: #fff; font-variant-numeric: tabular-nums; }
+.stg-seat-alert { font-size: 0.22px; fill: #ff3b30; stroke: #000; stroke-width: 0.01px; paint-order: stroke; }
+.stg-conn { position: fixed; right: 1vw; bottom: 0.6vh; font-size: 2vh; color: #999; display: flex; align-items: center; gap: 0.5vh; opacity: 0.8; }
+.stg-dot { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: #e33; display: inline-block; }
+.stg-conn.on .stg-dot { background: #3d3; box-shadow: 0 0 6px #3d3; }
+.stg-overlay { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.stg-start div { font-size: 26vh; font-weight: 900; color: #fff; text-shadow: 0 0 4vh #ffd23f, 0 1vh 0 #000; animation: stg-pop 1.6s ease-out forwards; }
+@keyframes stg-pop { 0% { transform: scale(0.4); opacity: 0; } 20% { transform: scale(1.1); opacity: 1; } 75% { opacity: 1; } 100% { transform: scale(1.3); opacity: 0; } }
+.stg-result { background: #000000b8; animation: stg-fade 0.4s ease-out; }
+@keyframes stg-fade { from { opacity: 0; } to { opacity: 1; } }
+.stg-result-box { text-align: center; padding: 4vh 8vh; border: 1vh solid #ffd23f; border-radius: 4vh; background: #0b0806; box-shadow: 0 0 8vh #ffd23f55; }
+.stg-result-sub { font-size: 6vh; letter-spacing: 1.5vh; color: #ffd23f; font-weight: 900; }
+.stg-result-seat { font-size: 9vh; font-weight: 900; }
+.stg-result-name { font-size: 16vh; font-weight: 900; line-height: 1.1; max-width: 85vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stg-result-msg { font-size: 6vh; font-weight: 800; margin-top: 1vh; }
+.stg-result-msg span { color: #aaa; font-variant-numeric: tabular-nums; }
+.stg-estop-banner { position: fixed; top: 0; left: 0; right: 0; text-align: center; font-size: 7vh; font-weight: 900; background: #d00; color: #fff; padding: 1vh; animation: stg-blink 1s steps(2) infinite; }
+@keyframes stg-blink { 50% { background: #700; } }
+.stg-estop { box-shadow: inset 0 0 0 1vh #d00; }
