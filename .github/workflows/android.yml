@@ -1,0 +1,83 @@
+name: android-apk
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VITE_API_BASE: https://ek.ryuzu.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: tauri android init + icons
+        working-directory: web
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          pnpm tauri android init --ci
+          pnpm tauri icon src-tauri/app-icon.png -o src-tauri/icons
+
+      - name: build apk
+        working-directory: web
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          pnpm tauri android build --apk --target aarch64 armv7 --ci
+
+      - name: sign apk
+        run: |
+          APK=$(find web/src-tauri/gen/android -name '*release*.apk' | head -1)
+          echo "unsigned: $APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > ks.p12
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-pass env:KS_PASS --out enryo-killer.apk aligned.apk
+          "$BT/apksigner" verify enryo-killer.apk
+          rm ks.p12
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enryo-killer-apk
+          path: enryo-killer.apk
+          retention-days: 7
+
+      - name: publish to "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest enryo-killer.apk \
+            --target "$GITHUB_SHA" \
+            --title "Android 最新版 (${GITHUB_SHA::7})" \
+            --notes "main ${GITHUB_SHA::7} から自動ビルド。スマホで enryo-killer.apk をタップしてインストール。"
