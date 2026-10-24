@@ -2,6 +2,14 @@ name = "enryo-killer"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
+# 本番ドメイン (ryuzu.dev ゾーンが同じ Cloudflare アカウントにある前提。DNS/証明書は自動作成)
+routes = [{ pattern = "ek.ryuzu.dev", custom_domain = true }]
+
+# wrangler deploy / dev の前に web/ をビルド (cwd はこのファイルのあるディレクトリ)
+[build]
+command = "cd .. && pnpm install --frozen-lockfile && pnpm --filter web build"
+watch_dir = "../web/src"
+
 # web/ をビルドした静的ファイルも同じ Worker で配信 (デプロイ時 1 つで済む)
 [assets]
 directory = "../web/dist"
