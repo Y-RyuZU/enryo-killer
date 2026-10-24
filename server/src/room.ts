@@ -41,6 +41,7 @@ export class RoomDO extends DurableObject<Env> {
   powers: Partial<Record<Seat, { power: number; at: number }>> = {};
   tensions: Partial<Record<Seat, number>> = {};
   leaderSeat: Seat | null = null;
+  targetDirDeg: number | null = null;
   deviceSeq = 0;
   lastDevicePoll = 0;
   lastDevice: DeviceCmd | null = null;
@@ -80,6 +81,8 @@ export class RoomDO extends DurableObject<Env> {
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1], ["device"]);
       pair[1].serializeAttachment({ role: "device" } satisfies Attach);
+      // 実機が繋がったらバーチャル(C)からタイヤロボ(A)へ自動切替 (B を選んでいる場合はそのまま)
+      if (this.s.mode === "C") { this.s.mode = "A"; await this.save(); }
       this.sendDevice(this.devicePayload ?? "stop", pair[1]);
       if (this.s.mode === "B") this.sendXy(pair[1]);
       this.broadcast();
@@ -118,6 +121,7 @@ export class RoomDO extends DurableObject<Env> {
         plate: this.s.plate,
         leaderSeat: this.leaderSeat,
         params: this.s.params,
+        targetDirDeg: this.targetDirDeg,
       });
       this.lastDevice = cmd;
       return Response.json(cmd);
@@ -238,6 +242,7 @@ export class RoomDO extends DurableObject<Env> {
     this.tensions = out.tensions;
     this.s.plate = out.plate;
     this.leaderSeat = out.leaderSeat;
+    this.targetDirDeg = out.targetDirDeg;
     this.autoDevice();
     if (out.winnerSeat) {
       this.s.winnerSeat = out.winnerSeat;
@@ -339,7 +344,7 @@ export class RoomDO extends DurableObject<Env> {
     if (Date.now() < this.manualUntil) return;
     const cmd = deviceCmd({
       type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
-      plate: this.s.plate, leaderSeat: this.leaderSeat, params: this.s.params,
+      plate: this.s.plate, leaderSeat: this.leaderSeat, params: this.s.params, targetDirDeg: this.targetDirDeg,
     });
     this.sendDevice(movePayload(cmd));
   }

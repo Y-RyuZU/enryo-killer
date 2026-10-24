@@ -23,7 +23,7 @@ pnpm dev:web      # vite → http://localhost:5173  (/api は 8787 にプロキ�
 
 - PC: `http://<PCのIP>:5173/sim` → 「部屋をつくる」→ 4文字コードが出る
 - スマホ: `http://<PCのIP>:5173/?room=XXXX` → 名前と席 (東西南北) をタップ → 縄画面
-- PCで「開始」。縄を下にドラッグした量 = 引く力。一番引いてる人の席へ皿がじわじわ動き、決着距離に入ったら勝ち
+- PCで「開始」。縄を下にドラッグした量 = 引く力。4人の引く力を合算した方向へ皿がじわじわ動き、決着距離に入ったら勝ち
 
 テスト:
 
@@ -40,8 +40,10 @@ PLAYWRIGHT_BROWSERS_PATH=.playwright pnpm screenshots   # screenshots/*.png
 
 ```
 tension[席] = tension*decay + power*(1-decay)      // power = 縄のドラッグ量 0..1 (1.5s 来なければ 0)
-leader = 最大 tension の席 (2位との差 < tieMargin なら拮抗 = 動かない)
-speed  = clamp((1位-2位) * gain, 0, 1)
+F      = Σ tension[席] × 席方向の単位ベクトル (4人の合力。向かい合う同じ力は打ち消し合う)
+|F| < tieMargin なら拮抗 = 動かない。皿は F の向きへ進む
+speed  = clamp(|F| * gain, 0, 1)
+leader = F の向きに一番近い席 (勝ち/負け表示用)
 皿は leader の席へ speed * maxSpeed (卓半径/秒) で移動 → 席から winRadius 以内で決着
 ```
 係数は PC シミュレーター画面のスライダーでリアルタイム調整可。

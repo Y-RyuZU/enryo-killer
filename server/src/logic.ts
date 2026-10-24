@@ -38,27 +38,38 @@ export function step({ powers, tensions, plate, params, dt }: StepInput): StepOu
     if (powers[s] === undefined && tensions[s] === undefined) continue;
     nt[s] = (tensions[s] ?? 0) * k + clamp(powers[s] ?? 0, 0, 1) * (1 - k);
   }
-  const ranked = (Object.entries(nt) as [Seat, number][]).sort((a, b) => b[1] - a[1]);
-  const [lead, second] = ranked;
-  const margin = lead ? lead[1] - (second ? second[1] : 0) : 0;
-  let leaderSeat: Seat | null = lead && margin >= p.tieMargin && lead[1] > 0.02 ? lead[0] : null;
+  // 合力方式: 各席の tension をその席方向の単位ベクトルとして足し合わせ、合力の向き・大きさで皿を動かす
+  // (向かい合う 2 人が同じ力なら打ち消し合って止まる)
+  let fx = 0, fy = 0;
+  for (const [s, t] of Object.entries(nt) as [Seat, number][]) {
+    fx += SEAT_POS[s].x * t;
+    fy += SEAT_POS[s].y * t;
+  }
+  const mag = Math.hypot(fx, fy);
+  // leaderSeat = 合力の向きに一番近い席 (UI の勝ち/負け表示・デバイス B の目標用)
+  let leaderSeat: Seat | null = null;
+  if (mag >= p.tieMargin && mag > 0.02) {
+    let best = -Infinity;
+    for (const s of Object.keys(nt) as Seat[]) {
+      const d = (SEAT_POS[s].x * fx + SEAT_POS[s].y * fy) / mag;
+      if (d > best) { best = d; leaderSeat = s; }
+    }
+  }
 
   const np = { ...plate };
   let targetDirDeg: number | null = null;
   if (leaderSeat) {
-    const tgt = SEAT_POS[leaderSeat];
-    const dx = tgt.x - plate.x, dy = tgt.y - plate.y;
-    const dist = Math.hypot(dx, dy);
-    np.speed = clamp(margin * p.gain, 0, 1);
-    const stepLen = Math.min(dist, np.speed * p.maxSpeed * dt);
-    if (dist > 1e-6) {
-      np.x += (dx / dist) * stepLen;
-      np.y += (dy / dist) * stepLen;
-      targetDirDeg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360; // 0=N 時計回り
-      // オープンループの向き推定: 最大 90°/s で目標方向へ回す
-      const dh = wrap180(targetDirDeg - plate.headingDeg);
-      np.headingDeg = (plate.headingDeg + clamp(dh, -90 * dt, 90 * dt) + 360) % 360;
-    }
+    np.speed = clamp(mag * p.gain, 0, 1);
+    const stepLen = np.speed * p.maxSpeed * dt;
+    np.x += (fx / mag) * stepLen;
+    np.y += (fy / mag) * stepLen;
+    // 卓の外へは出さない (席位置 = 半径 1)
+    const r = Math.hypot(np.x, np.y);
+    if (r > 1) { np.x /= r; np.y /= r; }
+    targetDirDeg = ((Math.atan2(fx, -fy) * 180) / Math.PI + 360) % 360; // 0=N 時計回り
+    // オープンループの向き推定: 最大 90°/s で目標方向へ回す
+    const dh = wrap180(targetDirDeg - plate.headingDeg);
+    np.headingDeg = (plate.headingDeg + clamp(dh, -90 * dt, 90 * dt) + 360) % 360;
   } else {
     np.speed = 0;
   }
@@ -80,14 +91,15 @@ export function deviceCmd(opts: {
   plate: Plate;
   leaderSeat: Seat | null;
   params: Params;
+  targetDirDeg?: number | null; // 合力の向き (あればこちらを優先)
 }): DeviceCmd {
-  const { type, mode, phase, estop, seq, plate, leaderSeat, params } = opts;
+  const { type, mode, phase, estop, seq, plate, leaderSeat, params, targetDirDeg } = opts;
   const active = !estop && phase === "playing" && mode === type && leaderSeat !== null;
   const base: DeviceCmd = { type, seq, ttlMs: DEVICE_TTL_MS, active, estop, phase, leaderSeat };
   if (type === "A") {
     if (!active || !leaderSeat) return { ...base, dirDeg: plate.headingDeg, speed: 0, turn: 0, fwd: 0 };
     const tgt = SEAT_POS[leaderSeat];
-    const dirDeg = ((Math.atan2(tgt.x - plate.x, -(tgt.y - plate.y)) * 180) / Math.PI + 360) % 360;
+    const dirDeg = targetDirDeg ?? ((Math.atan2(tgt.x - plate.x, -(tgt.y - plate.y)) * 180) / Math.PI + 360) % 360;
     const dh = wrap180(dirDeg - plate.headingDeg);
     const turn = clamp(dh / 90, -1, 1);
     const fwd = Math.abs(dh) < 30 ? plate.speed : 0;
