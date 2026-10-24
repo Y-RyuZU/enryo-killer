@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS } from "./shared";
 import { PULL_STALE_MS, clamp, deviceCmd, movePayload, step } from "./logic";
+import { xyMsg } from "./logic";
+import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg } from "./shared";
 
 type Player = { playerId: string; name: string; seat: Seat };
 type Persisted = {
@@ -45,6 +47,11 @@ export class RoomDO extends DurableObject<Env> {
   devicePayload: MovePayload | null = null;
   manualUntil = 0;
   manualTimer: ReturnType<typeof setInterval> | null = null;
+  // Plan B (磁石XY)
+  xySeq = 0;
+  lastXy: XyMsg | null = null;
+  manualXy: { x: number; y: number; until: number } | null = null;
+  manualXyTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -64,6 +71,8 @@ export class RoomDO extends DurableObject<Env> {
     const code = url.searchParams.get("code") ?? "";
     if (!this.s.code && code) this.s.code = code;
     const path = url.pathname;
+    const xyRes = await this.fetchXy(req, path);
+    if (xyRes) return xyRes;
 
     if (path.endsWith("/device/ws")) {
       // ESP32 用: サーバーから {"payload":"forward"} 等を push するだけ (受信は ping 用に無視)
@@ -72,6 +81,7 @@ export class RoomDO extends DurableObject<Env> {
       this.ctx.acceptWebSocket(pair[1], ["device"]);
       pair[1].serializeAttachment({ role: "device" } satisfies Attach);
       this.sendDevice(this.devicePayload ?? "stop", pair[1]);
+      if (this.s.mode === "B") this.sendXy(pair[1]);
       this.broadcast();
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
@@ -124,6 +134,7 @@ export class RoomDO extends DurableObject<Env> {
   // ---------- WebSocket (Hibernation API) ----------
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     const att0 = ws.deserializeAttachment() as Attach | null;
+    if (att0?.role === "device" && this.s.mode === "B") this.sendXy(ws); // XY 機は ping ごとに最新目標を返す
     if (att0?.role === "device") return; // デバイスからの送信 (ping 等) は無視
     let msg: C2S;
     try {
@@ -159,7 +170,7 @@ export class RoomDO extends DurableObject<Env> {
         await this.host(msg.cmd);
         return;
       case "config": {
-        if (msg.mode && ["A", "B", "C"].includes(msg.mode)) this.s.mode = msg.mode;
+        if (msg.mode && ["A", "B", "C"].includes(msg.mode)) { this.s.mode = msg.mode; this.autoDevice(); }
         if (msg.params) {
           for (const [k, v] of Object.entries(msg.params)) {
             if (k in DEFAULT_PARAMS && typeof v === "number" && isFinite(v)) (this.s.params as any)[k] = v;
@@ -285,6 +296,8 @@ export class RoomDO extends DurableObject<Env> {
       deviceOnline: Date.now() - this.lastDevicePoll < DEVICE_ONLINE_MS || this.ctx.getWebSockets("device").length > 0,
       devicePayload: this.devicePayload,
       deviceWsCount: this.ctx.getWebSockets("device").length,
+      deviceMode: MODE_TO_DEVICE_MODE[this.s.mode],
+      xy: this.lastXy,
       ...(viewer ? { lastDevice: this.lastDevice } : {}),
     };
     if (forPlayer !== undefined) {
@@ -322,6 +335,7 @@ export class RoomDO extends DurableObject<Env> {
 
   /** tick ごとに mode A のコマンドを WS デバイスへ (手動テスト中は抑制) */
   autoDevice() {
+    if (this.s.mode === "B") this.sendXy();
     if (Date.now() < this.manualUntil) return;
     const cmd = deviceCmd({
       type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
@@ -348,6 +362,64 @@ export class RoomDO extends DurableObject<Env> {
       } else this.sendDevice(payload);
     }, 250);
     this.broadcast();
+  }
+
+  // ---------- Plan B: 磁石 XY ----------
+  /** 現在の目標 (手動ジョグ中はその座標、通常は皿位置) を {t:"xy"} で device/ws へ */
+  sendXy(only?: WebSocket) {
+    const man = this.manualXy && Date.now() < this.manualXy.until ? this.manualXy : null;
+    const src = man ?? this.s.plate;
+    const msg = xyMsg({ mode: this.s.mode, estop: this.s.estop, seq: ++this.xySeq, x: src.x, y: src.y, manual: !!man });
+    this.lastXy = msg;
+    const raw = JSON.stringify(msg);
+    for (const ws of only ? [only] : this.ctx.getWebSockets("device")) {
+      try { ws.send(raw); } catch {}
+    }
+  }
+
+  /** /device/mode (GET|PUT) と /device/xy (POST)。該当しなければ null */
+  async fetchXy(req: Request, path: string): Promise<Response | null> {
+    const modeRes = () => Response.json({
+      ok: true, deviceMode: MODE_TO_DEVICE_MODE[this.s.mode], mode: this.s.mode,
+      devices: this.ctx.getWebSockets("device").length, xy: this.lastXy,
+    });
+    if (path.endsWith("/device/mode")) {
+      if (req.method === "GET") return modeRes();
+      if (req.method !== "PUT" && req.method !== "POST") return new Response("method not allowed", { status: 405 });
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const dm = body?.deviceMode as DeviceMode;
+      if (!DEVICE_MODES.includes(dm)) return Response.json({ ok: false, error: `deviceMode must be one of ${DEVICE_MODES.join(", ")}` }, { status: 400 });
+      this.s.mode = DEVICE_MODE_TO_MODE[dm];
+      this.autoDevice();
+      await this.save();
+      this.broadcast();
+      return modeRes();
+    }
+    if (path.endsWith("/device/xy") && req.method === "POST") {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const x = Number(body?.x), y = Number(body?.y);
+      if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 1.5 || Math.abs(y) > 1.5) return Response.json({ ok: false, error: "x, y は -1..1 の数値" }, { status: 400 });
+      if (this.s.mode !== "B") return Response.json({ ok: false, error: "deviceMode が xy ではない (PUT /device/mode で切替)" }, { status: 409 });
+      if (this.s.estop) return Response.json({ ok: false, error: "estop 中 (解除してから)" }, { status: 409 });
+      const durationMs = clamp(Number(body?.durationMs ?? 5000) || 5000, 500, 30000);
+      this.manualXy = { x, y, until: Date.now() + durationMs };
+      if (this.manualXyTimer) clearInterval(this.manualXyTimer);
+      this.manualXyTimer = setInterval(() => {
+        this.sendXy();
+        if (!this.manualXy || Date.now() >= this.manualXy.until) {
+          clearInterval(this.manualXyTimer!);
+          this.manualXyTimer = null;
+          this.manualXy = null;
+          this.broadcast();
+        }
+      }, 250);
+      this.sendXy();
+      this.broadcast();
+      return Response.json({ ok: true, durationMs, devices: this.ctx.getWebSockets("device").length, xy: this.lastXy });
+    }
+    return null;
   }
 
   err(ws: WebSocket, message: string) {

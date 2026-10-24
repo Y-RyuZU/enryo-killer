@@ -28,6 +28,15 @@ app.all("/api/rooms/:code/device/:action{ws|cmd}", async (c) => {
   return stub(c.env, code).fetch(new Request(url.toString(), c.req.raw));
 });
 
+// Plan B: デバイスモード切替 (wheels|xy|none) / XY 手動ジョグ
+app.all("/api/rooms/:code/device/:action{mode|xy}", async (c) => {
+  const code = norm(c.req.param("code"));
+  if (!code) return c.text("bad code", 400);
+  const url = new URL(c.req.url);
+  url.searchParams.set("code", code);
+  return stub(c.env, code).fetch(new Request(url.toString(), c.req.raw));
+});
+
 app.get("/api/openapi.json", (c) => c.json(openapi));
 app.get("/api/docs", (c) => c.html(swaggerHtml));
 

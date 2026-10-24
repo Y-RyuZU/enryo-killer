@@ -39,6 +39,8 @@ export type Snapshot = {
   lastDevice?: DeviceCmd | null;
   devicePayload?: MovePayload | null; // ESP32 (WS) に最後に送ったコマンド
   deviceWsCount?: number;
+  deviceMode?: DeviceMode; // mode から導出 (A=wheels, B=xy, C=none)
+  xy?: XyMsg | null; // mode B で device/ws に最後に送った目標座標
   me?: { playerId: string; seat: Seat | null; tension: number; status: Status };
 };
 
@@ -80,3 +82,22 @@ export type DeviceCmd = {
 export type MovePayload = "forward" | "backward" | "turn_right" | "turn_left" | "stop";
 export const MOVE_PAYLOADS: MovePayload[] = ["forward", "backward", "turn_right", "turn_left", "stop"];
 export type DeviceWsMsg = { payload: MovePayload };
+
+// ===== Plan B: 磁石 XY (device/ws に {t:"xy",...} を push) =====
+// deviceMode は room.mode の別名: wheels=A, xy=B, none=C (C=バーチャルのみ、デバイスは停止)
+export type DeviceMode = "wheels" | "xy" | "none";
+export const DEVICE_MODES: DeviceMode[] = ["wheels", "xy", "none"];
+export const DEVICE_MODE_TO_MODE: Record<DeviceMode, Mode> = { wheels: "A", xy: "B", none: "C" };
+export const MODE_TO_DEVICE_MODE: Record<Mode, DeviceMode> = { A: "wheels", B: "xy", C: "none" };
+export type XyMsg = {
+  t: "xy";
+  seq: number;
+  active: boolean; // false = その場で停止 (ホールド)
+  estop: boolean; // true = 停止してドライバ無効化
+  ttlMs: number; // この時間メッセージが来なければ停止
+  x: number; // 目標座標 -1..1 (卓中心原点, 卓半径=1, +x=東, +y=南)
+  y: number;
+  x_mm: number; // 参考: TABLE_RADIUS_MM 換算
+  y_mm: number;
+  manual?: boolean; // POST /device/xy の手動ジョグ中
+};

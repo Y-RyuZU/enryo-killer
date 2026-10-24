@@ -83,6 +83,46 @@ export const openapi = {
   },
 };
 
+// ===== Plan B: 磁石 XY (追記) =====
+openapi.info.description += "\n\n" + [
+  "## 磁石 XY (Plan B) — deviceMode = xy",
+  "`PUT /api/rooms/{code}/device/mode` で `xy` にすると (= mode B)、同じ `device/ws` に次の JSON が push されます:",
+  "```json",
+  '{ "t": "xy", "seq": 12, "active": true, "estop": false, "ttlMs": 1500, "x": 0.31, "y": -0.05, "x_mm": 62, "y_mm": -10 }',
+  "```",
+  "- `x,y` = 皿の目標座標 (-1..1、卓中心原点、卓半径=1、+x=東 +y=南)。対戦中は 0.5 秒ごと",
+  "- デバイスが何かメッセージ (ping 等) を送ると、その都度最新の xy を返す → ロビー中も 500ms ごとに ping すれば TTL 切れしない",
+  "- `active:false` = その場で停止、`estop:true` = 停止してドライバ無効化。`ttlMs` 何も来なければ停止",
+  "- `{\"payload\":...}` (タイヤ用) も従来通り流れるので XY 機は `\"t\":\"xy\"` 以外を無視すること。タイヤ機は xy を無視する",
+  "- 手動テスト: `POST /device/xy` で任意座標へジョグ。人間磁石画面: `/magnet?room={code}`",
+].join("\n");
+const deviceModeEnum = ["wheels", "xy", "none"];
+const modeRes = { description: "現在のモード", content: { "application/json": { example: { ok: true, deviceMode: "xy", mode: "B", devices: 1, xy: { t: "xy", seq: 3, active: true, estop: false, ttlMs: 1500, x: 0, y: 0, x_mm: 0, y_mm: 0 } } } } };
+Object.assign(openapi.paths, {
+  "/api/rooms/{code}/device/mode": {
+    get: { summary: "デバイスモード取得 (wheels=A タイヤ / xy=B 磁石XY / none=C バーチャル)", parameters: [room], responses: { 200: modeRes } },
+    put: {
+      summary: "デバイスモード切替 (PC 画面の出力モードと同じ)",
+      parameters: [room],
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["deviceMode"], properties: { deviceMode: { type: "string", enum: deviceModeEnum, example: "xy" } } } } } },
+      responses: { 200: modeRes, 400: { description: "deviceMode 不正" } },
+    },
+  },
+  "/api/rooms/{code}/device/xy": {
+    post: {
+      summary: "XY 機を手動で任意座標へ (疎通/キャリブレーション用)",
+      description: "deviceMode=xy の時のみ。durationMs の間この座標を 250ms ごとに送り、その後は皿の位置に戻る。(0,0)=中央、(1,0)=東端、(0,-1)=北端",
+      parameters: [room],
+      requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["x", "y"], properties: {
+        x: { type: "number", minimum: -1, maximum: 1, example: 0.5 },
+        y: { type: "number", minimum: -1, maximum: 1, example: 0 },
+        durationMs: { type: "integer", minimum: 500, maximum: 30000, default: 5000 },
+      } } } } },
+      responses: { 200: { description: "送信した" }, 400: { description: "座標不正" }, 409: { description: "xy モードでない / 緊急停止中" } },
+    },
+  },
+});
+
 export const swaggerHtml = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>遠慮の塊 API</title>

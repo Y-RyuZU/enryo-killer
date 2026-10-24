@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase, MovePayload } from "./shared";
+import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase, MovePayload, XyMsg } from "./shared";
 
 export const SEAT_POS: Record<Seat, { x: number; y: number }> = {
   N: { x: 0, y: -1 },
@@ -114,4 +114,28 @@ export function movePayload(cmd: DeviceCmd): MovePayload {
   if (turn >= TURN_THRESHOLD) return "turn_right";
   if (turn <= -TURN_THRESHOLD) return "turn_left";
   return (cmd.fwd ?? 0) > 0 ? "forward" : "stop";
+}
+
+/** mode B (磁石XY): 皿の現在位置をそのまま目標座標として送る。単位円にクランプ */
+export const XY_TTL_MS = 1500;
+export function xyMsg(opts: { mode: Mode; estop: boolean; seq: number; x: number; y: number; manual?: boolean }): XyMsg {
+  let { x, y } = opts;
+  if (!isFinite(x)) x = 0;
+  if (!isFinite(y)) y = 0;
+  const r = Math.hypot(x, y);
+  if (r > 1) { x /= r; y /= r; }
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
+  return {
+    t: "xy",
+    seq: opts.seq,
+    // ロビー/決着中も「今の皿位置でホールド」= active。リセットで中央へ戻る
+    active: !opts.estop && opts.mode === "B",
+    estop: opts.estop,
+    ttlMs: XY_TTL_MS,
+    x: r3(x),
+    y: r3(y),
+    x_mm: Math.round(x * TABLE_RADIUS_MM),
+    y_mm: Math.round(y * TABLE_RADIUS_MM),
+    ...(opts.manual ? { manual: true } : {}),
+  };
 }

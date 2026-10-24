@@ -5,3 +5,4 @@ dist
 *.log
 .playwright
 firmware/esp32_device/config.h
+firmware/esp32_xy/config.h

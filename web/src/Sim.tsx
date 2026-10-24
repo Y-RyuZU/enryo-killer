@@ -5,7 +5,7 @@ import { JoinQR, JoinQROverlay } from "./JoinQR";
 const SEAT_XY: Record<Seat, [number, number]> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
 const MODES: { m: Mode; label: string; desc: string }[] = [
   { m: "A", label: "A タイヤロボ", desc: "ESP32が方向+速度をポーリング" },
-  { m: "B", label: "B 磁石XY", desc: "XY装置が目標座標をポーリング" },
+  { m: "B", label: "B 磁石XY", desc: "device/ws に {x,y} を送信 (deviceMode=xy)" },
   { m: "C", label: "C バーチャル皿", desc: "この画面の皿だけ動く" },
 ];
 const SLIDERS: { k: keyof Params; label: string; min: number; max: number; step: number }[] = [
@@ -211,7 +211,9 @@ function Host({ snap, send }: { snap: Snapshot; send: (m: any) => void }) {
           {!!snap.deviceWsCount && <> (ESP32 WS×{snap.deviceWsCount}) </>}
           {snap.devicePayload && <code>{JSON.stringify({ payload: snap.devicePayload })}</code>}
           {snap.lastDevice && <code>{JSON.stringify(snap.lastDevice)}</code>}
+          {snap.mode === "B" && snap.xy && <code>{JSON.stringify(snap.xy)}</code>}
           <a href="/api/docs" target="_blank" rel="noreferrer">API (Swagger)</a>
+          {" · "}<a href={`/magnet?room=${snap.code}`} target="_blank" rel="noreferrer">人間磁石画面</a>
         </div>
       </section>
       <section className="card">
