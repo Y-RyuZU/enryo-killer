@@ -7,7 +7,9 @@
     "test:e2e": "node scripts/fake-players.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
