@@ -9,6 +9,22 @@ const wsBase = () => {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
 };
 
+// QR / 共有に載せる公開オリジン。Tauri (tauri://localhost 等) では共有できないので VITE_API_BASE か本番を使う
+const FALLBACK_ORIGIN = "https://ek.ryuzu.dev";
+const stripSlash = (s: string) => s.replace(/\/+$/, "");
+export const isTauri = () =>
+  typeof (window as any).__TAURI_INTERNALS__ !== "undefined" ||
+  location.protocol === "tauri:" ||
+  location.hostname === "tauri.localhost";
+export function publicOrigin(): string {
+  const httpish = location.protocol === "http:" || location.protocol === "https:";
+  if (httpish && !isTauri()) return stripSlash(location.origin); // 本番 / LAN IP の dev
+  return stripSlash(API_BASE || FALLBACK_ORIGIN);
+}
+export const sanitizeCode = (s: string | null | undefined) =>
+  (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+export const joinUrl = (code: string) => `${publicOrigin()}/?room=${encodeURIComponent(code)}`;
+
 export async function createRoom(): Promise<string> {
   const r = await fetch(`${API_BASE}/api/rooms`, { method: "POST" });
   return (await r.json()).code;

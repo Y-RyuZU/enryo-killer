@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { SEATS, SEAT_LABEL, Seat, Snapshot, getPlayerId, useRoom } from "./api";
+import { SEATS, SEAT_LABEL, Seat, Snapshot, getPlayerId, sanitizeCode, useRoom } from "./api";
 import { Karaage } from "./Karaage";
 
 const NAMES = ["からあげ太郎", "遠慮さん", "最後の一個", "レモン派", "マヨ派", "渋い人"];
 
 export function Mobile() {
-  const qs = new URLSearchParams(location.search);
-  const [code, setCode] = useState((qs.get("room") ?? localStorage.getItem("enryo.room") ?? "").toUpperCase());
+  // QR (?room=XXXX) から来たらそれを最優先。保存済みの部屋より勝つ
+  const [code, setCode] = useState(() => {
+    const urlRoom = sanitizeCode(new URLSearchParams(location.search).get("room"));
+    return urlRoom || sanitizeCode(localStorage.getItem("enryo.room"));
+  });
   const [name, setName] = useState(localStorage.getItem("enryo.name") ?? NAMES[Math.floor(Math.random() * NAMES.length)]);
   const playerId = useState(getPlayerId)[0];
   const active = code.length >= 4 ? code : null;
@@ -15,6 +18,14 @@ export function Mobile() {
 
   useEffect(() => { if (active) localStorage.setItem("enryo.room", active); }, [active]);
   useEffect(() => { localStorage.setItem("enryo.name", name); }, [name]);
+  // ?room は一度読んだら URL から消す (リロードで古いコードに戻らないように)
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search);
+    if (!qs.has("room")) return;
+    qs.delete("room");
+    const rest = qs.toString();
+    history.replaceState(null, "", location.pathname + (rest ? `?${rest}` : "") + location.hash);
+  }, []);
 
   if (snap && mySeat) return <Rope snap={snap} seat={mySeat} send={send} connected={connected} />;
 
@@ -28,7 +39,7 @@ export function Mobile() {
       <label className="field">
         <span>部屋コード</span>
         <input value={code} maxLength={8} inputMode="text" autoCapitalize="characters" placeholder="ABCD"
-          onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} />
+          onChange={(e) => setCode(sanitizeCode(e.target.value))} />
       </label>
       <label className="field">
         <span>なまえ</span>
@@ -49,7 +60,7 @@ export function Mobile() {
           );
         })}
       </div>
-      <p className="hint">{!active ? "PC画面に出てる4文字のコードを入れてね" : !snap ? "接続中…" : "テーブルで自分が座ってる方角をタップ"}</p>
+      <p className="hint">{!active ? "PC画面のQRを読むか、4文字のコードを入れてね" : !snap ? "接続中…" : "テーブルで自分が座ってる方角をタップ"}</p>
       {error && <div className="toast">{error}</div>}
     </div>
   );

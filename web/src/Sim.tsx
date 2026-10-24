@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Mode, Params, Plate, SEATS, SEAT_LABEL, Seat, Snapshot, createRoom, useRoom } from "./api";
+import { Mode, Params, Plate, SEATS, SEAT_LABEL, Seat, Snapshot, createRoom, joinUrl, sanitizeCode, useRoom } from "./api";
+import { JoinQR, JoinQROverlay } from "./JoinQR";
 
 const SEAT_XY: Record<Seat, [number, number]> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
 const MODES: { m: Mode; label: string; desc: string }[] = [
@@ -17,8 +18,20 @@ const SLIDERS: { k: keyof Params; label: string; min: number; max: number; step:
 
 export function Sim() {
   const qs = new URLSearchParams(location.search);
-  const [code, setCode] = useState<string | null>(qs.get("room")?.toUpperCase() ?? null);
+  const [code, setCode] = useState<string | null>(sanitizeCode(qs.get("room")) || null);
   const { snap, connected, send } = useRoom(code, "viewer");
+  const [qrBig, setQrBig] = useState(qs.get("qr") === "1");
+
+  // Q キーで大きいQRをトグル (プロジェクタ用)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      if (e.key === "q" || e.key === "Q") setQrBig((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const newRoom = async () => {
     const c = await createRoom();
@@ -34,7 +47,8 @@ export function Sim() {
       </div>
     );
   }
-  const joinUrl = `${location.origin}/?room=${code}`;
+  const url = joinUrl(code);
+  const isLocal = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
   return (
     <div className="sim">
       <main className="sim-main">
@@ -48,10 +62,16 @@ export function Sim() {
         <section className="card room">
           <div className="label">部屋コード</div>
           <div className="code">{code}</div>
-          <div className="url">{joinUrl}</div>
+          <button className="room-qr" title="クリックで大きく表示 (Q キー)" onClick={() => setQrBig(true)}>
+            <JoinQR url={url} />
+          </button>
+          <div className="url">{url}</div>
+          {isLocal && <div className="qr-warn">localhost だとスマホから開けないので LAN IP で開いてね</div>}
+          <button className="btn qr-open" onClick={() => setQrBig(true)}>QRを大きく表示 (Q)</button>
         </section>
         {snap && <Host snap={snap} send={send} />}
       </aside>
+      {qrBig && <JoinQROverlay url={url} code={code} onClose={() => setQrBig(false)} />}
     </div>
   );
 }
