@@ -12,3 +12,5 @@
 - シリアルに `[ws] connected` → https://ek.ryuzu.dev/api/docs の `POST /api/rooms/{code}/device/cmd` で `forward` → `[cmd] forward` が出てモーターが回ればOK
 - 通信が 1 秒途切れると自動で stop (FAILSAFE_MS)
 - ピン・速度は `config.h` だけ直せばよい。モーターがない状態でもシリアルで受信確認できる
+
+疎通手順の全体は [HANDOFF.md](HANDOFF.md)
