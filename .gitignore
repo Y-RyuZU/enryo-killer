@@ -4,3 +4,4 @@ dist
 .dev.vars
 *.log
 .playwright
+firmware/esp32_device/config.h
