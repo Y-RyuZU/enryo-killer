@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd } from "./shared";
-import { PULL_STALE_MS, clamp, deviceCmd, step } from "./logic";
+import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS } from "./shared";
+import { PULL_STALE_MS, clamp, deviceCmd, movePayload, step } from "./logic";
 
 type Player = { playerId: string; name: string; seat: Seat };
 type Persisted = {
@@ -13,7 +13,7 @@ type Persisted = {
   plate: Plate;
   winnerSeat: Seat | null;
 };
-type Attach = { role: "player" | "viewer"; playerId?: string };
+type Attach = { role: "player" | "viewer" | "device"; playerId?: string };
 
 export interface Env {
   ROOM: DurableObjectNamespace<RoomDO>;
@@ -42,6 +42,9 @@ export class RoomDO extends DurableObject<Env> {
   deviceSeq = 0;
   lastDevicePoll = 0;
   lastDevice: DeviceCmd | null = null;
+  devicePayload: MovePayload | null = null;
+  manualUntil = 0;
+  manualTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -62,6 +65,27 @@ export class RoomDO extends DurableObject<Env> {
     if (!this.s.code && code) this.s.code = code;
     const path = url.pathname;
 
+    if (path.endsWith("/device/ws")) {
+      // ESP32 用: サーバーから {"payload":"forward"} 等を push するだけ (受信は ping 用に無視)
+      if (req.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+      const pair = new WebSocketPair();
+      this.ctx.acceptWebSocket(pair[1], ["device"]);
+      pair[1].serializeAttachment({ role: "device" } satisfies Attach);
+      this.sendDevice(this.devicePayload ?? "stop", pair[1]);
+      this.broadcast();
+      return new Response(null, { status: 101, webSocket: pair[0] });
+    }
+    if (path.endsWith("/device/cmd") && req.method === "POST") {
+      // 疎通/手動テスト用: 指定コマンドを durationMs の間 (500ms ごとに再送) 流し、その後 stop
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const payload = body?.payload as MovePayload;
+      if (!MOVE_PAYLOADS.includes(payload)) return Response.json({ ok: false, error: `payload must be one of ${MOVE_PAYLOADS.join(", ")}` }, { status: 400 });
+      if (this.s.estop && payload !== "stop") return Response.json({ ok: false, error: "estop 中 (解除してから)" }, { status: 409 });
+      const durationMs = clamp(Number(body?.durationMs ?? 1000) || 1000, 100, 5000);
+      this.manual(payload, durationMs);
+      return Response.json({ ok: true, payload, durationMs, devices: this.ctx.getWebSockets("device").length });
+    }
     if (path.endsWith("/ws")) {
       if (req.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
       const pair = new WebSocketPair();
@@ -89,6 +113,7 @@ export class RoomDO extends DurableObject<Env> {
       return Response.json(cmd);
     }
     if (path.endsWith("/estop") && req.method === "POST") {
+      this.manual("stop", 0);
       await this.host("estop");
       return Response.json({ ok: true });
     }
@@ -98,6 +123,8 @@ export class RoomDO extends DurableObject<Env> {
 
   // ---------- WebSocket (Hibernation API) ----------
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
+    const att0 = ws.deserializeAttachment() as Attach | null;
+    if (att0?.role === "device") return; // デバイスからの送信 (ping 等) は無視
     let msg: C2S;
     try {
       msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
@@ -172,6 +199,7 @@ export class RoomDO extends DurableObject<Env> {
       this.resetGame();
       this.s.phase = "lobby";
     }
+    if (cmd !== "start" && cmd !== "release_estop") this.autoDevice();
     await this.save();
     this.broadcast();
   }
@@ -199,11 +227,13 @@ export class RoomDO extends DurableObject<Env> {
     this.tensions = out.tensions;
     this.s.plate = out.plate;
     this.leaderSeat = out.leaderSeat;
+    this.autoDevice();
     if (out.winnerSeat) {
       this.s.winnerSeat = out.winnerSeat;
       this.s.phase = "finished";
       this.leaderSeat = null;
       this.s.plate.speed = 0;
+      this.autoDevice();
       await this.save();
     } else {
       await this.ctx.storage.setAlarm(now + TICK_MS);
@@ -252,7 +282,9 @@ export class RoomDO extends DurableObject<Env> {
       plate: this.s.plate,
       leaderSeat: this.leaderSeat,
       winnerSeat: this.s.winnerSeat,
-      deviceOnline: Date.now() - this.lastDevicePoll < DEVICE_ONLINE_MS,
+      deviceOnline: Date.now() - this.lastDevicePoll < DEVICE_ONLINE_MS || this.ctx.getWebSockets("device").length > 0,
+      devicePayload: this.devicePayload,
+      deviceWsCount: this.ctx.getWebSockets("device").length,
       ...(viewer ? { lastDevice: this.lastDevice } : {}),
     };
     if (forPlayer !== undefined) {
@@ -272,7 +304,50 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   broadcast() {
-    for (const ws of this.ctx.getWebSockets()) this.sendTo(ws);
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment() as Attach | null;
+      if (a?.role === "device") continue;
+      this.sendTo(ws);
+    }
+  }
+
+  // ---------- ESP32 WebSocket ----------
+  sendDevice(payload: MovePayload, only?: WebSocket) {
+    this.devicePayload = payload;
+    const msg = JSON.stringify({ payload });
+    for (const ws of only ? [only] : this.ctx.getWebSockets("device")) {
+      try { ws.send(msg); } catch {}
+    }
+  }
+
+  /** tick ごとに mode A のコマンドを WS デバイスへ (手動テスト中は抑制) */
+  autoDevice() {
+    if (Date.now() < this.manualUntil) return;
+    const cmd = deviceCmd({
+      type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
+      plate: this.s.plate, leaderSeat: this.leaderSeat, params: this.s.params,
+    });
+    this.sendDevice(movePayload(cmd));
+  }
+
+  manual(payload: MovePayload, durationMs: number) {
+    if (this.manualTimer) clearInterval(this.manualTimer);
+    this.manualTimer = null;
+    this.manualUntil = 0;
+    this.sendDevice(payload);
+    if (payload === "stop" || durationMs <= 0) { this.broadcast(); return; }
+    this.manualUntil = Date.now() + durationMs;
+    this.manualTimer = setInterval(() => {
+      if (Date.now() >= this.manualUntil) {
+        clearInterval(this.manualTimer!);
+        this.manualTimer = null;
+        this.manualUntil = 0;
+        this.sendDevice("stop");
+        this.autoDevice();
+        this.broadcast();
+      } else this.sendDevice(payload);
+    }, 250);
+    this.broadcast();
   }
 
   err(ws: WebSocket, message: string) {

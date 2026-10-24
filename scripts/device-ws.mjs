@@ -1,0 +1,43 @@
+// ESP32 WebSocket の疎通テスト: device/ws に繋いで、手動コマンド・自動制御・estop で payload が届くか検証
+// usage: node scripts/device-ws.mjs [--base http://127.0.0.1:8787]
+const args = process.argv.slice(2);
+const BASE = (args.indexOf("--base") >= 0 ? args[args.indexOf("--base") + 1] : "http://127.0.0.1:8787");
+const WS = BASE.replace(/^http/, "ws");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let fails = 0;
+const check = (c, l, x = "") => { console.log(`${c ? "✅" : "❌"} ${l} ${x}`); if (!c) fails++; };
+const code = (await (await fetch(`${BASE}/api/rooms`, { method: "POST" })).json()).code;
+const got = [];
+const dev = new WebSocket(`${WS}/api/rooms/${code}/device/ws`);
+dev.onmessage = (e) => got.push(JSON.parse(e.data).payload);
+await new Promise((r) => (dev.onopen = r));
+await sleep(300);
+check(got[0] === "stop", "接続直後に stop", JSON.stringify(got));
+const cmd = (b) => fetch(`${BASE}/api/rooms/${code}/device/cmd`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
+got.length = 0;
+const r = await cmd({ payload: "forward", durationMs: 800 });
+check(r.ok && r.devices === 1, "手動 forward 受付", JSON.stringify(r));
+await sleep(1300);
+check(got.includes("forward") && got.at(-1) === "stop", "forward を再送→最後に stop", JSON.stringify(got));
+check((await cmd({ payload: "jump" })).ok === false, "不正 payload は 400");
+// 自動制御: mode A で E 席の人だけ引く → turn_right (初期 heading=北) → そのうち forward
+const ctl = new WebSocket(`${WS}/api/rooms/${code}/ws?role=viewer`);
+await new Promise((r) => (ctl.onopen = r));
+ctl.send(JSON.stringify({ t: "config", mode: "A" }));
+const p = new WebSocket(`${WS}/api/rooms/${code}/ws?role=player&playerId=dev-e`);
+await new Promise((r) => (p.onopen = r));
+p.send(JSON.stringify({ t: "join", playerId: "dev-e", name: "E", seat: "E" }));
+await sleep(200);
+got.length = 0;
+ctl.send(JSON.stringify({ t: "host", cmd: "start" }));
+const iv = setInterval(() => p.send(JSON.stringify({ t: "pull", power: 0.9 })), 200);
+await sleep(3500);
+check(got.includes("turn_right"), "東へ向くため turn_right", JSON.stringify(got));
+check(got.includes("forward"), "向いたら forward", "");
+ctl.send(JSON.stringify({ t: "host", cmd: "estop" }));
+await sleep(400);
+check(got.at(-1) === "stop", "緊急停止で stop", got.at(-1));
+clearInterval(iv);
+for (const w of [dev, ctl, p]) w.close();
+console.log(fails ? `FAILED ${fails}` : "ALL OK");
+process.exit(fails ? 1 : 0);

@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase } from "./shared";
+import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase, MovePayload } from "./shared";
 
 export const SEAT_POS: Record<Seat, { x: number; y: number }> = {
   N: { x: 0, y: -1 },
@@ -104,4 +104,14 @@ export function deviceCmd(opts: {
     goal_y_mm: Math.round(goal.y * R * 0.8),
     feed_mm_s: active ? Math.round(plate.speed * params.maxSpeed * R) : 0,
   };
+}
+
+/** mode A のコマンドを ESP32 WS 用の単純コマンドに変換 (方位はサーバー側のオープンループ推定) */
+export const TURN_THRESHOLD = 0.33; // |turn| がこれ以上なら旋回 (≒30°ずれ)
+export function movePayload(cmd: DeviceCmd): MovePayload {
+  if (!cmd.active || cmd.estop) return "stop";
+  const turn = cmd.turn ?? 0;
+  if (turn >= TURN_THRESHOLD) return "turn_right";
+  if (turn <= -TURN_THRESHOLD) return "turn_left";
+  return (cmd.fwd ?? 0) > 0 ? "forward" : "stop";
 }

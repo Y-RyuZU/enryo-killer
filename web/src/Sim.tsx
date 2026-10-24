@@ -188,7 +188,10 @@ function Host({ snap, send }: { snap: Snapshot; send: (m: any) => void }) {
         </div>
         <div className="device">
           <span className={`dot ${snap.deviceOnline ? "on" : ""}`} /> デバイス {snap.deviceOnline ? "オンライン" : "未接続"}
+          {!!snap.deviceWsCount && <> (ESP32 WS×{snap.deviceWsCount}) </>}
+          {snap.devicePayload && <code>{JSON.stringify({ payload: snap.devicePayload })}</code>}
           {snap.lastDevice && <code>{JSON.stringify(snap.lastDevice)}</code>}
+          <a href="/api/docs" target="_blank" rel="noreferrer">API (Swagger)</a>
         </div>
       </section>
       <section className="card">

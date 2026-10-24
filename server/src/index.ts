@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { RoomDO, Env } from "./room";
 export { RoomDO };
+import { openapi, swaggerHtml } from "./openapi";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", cors());
@@ -17,6 +18,18 @@ app.post("/api/rooms", (c) => {
   const code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
   return c.json({ code });
 });
+
+// ESP32 WebSocket / 手動コマンド
+app.all("/api/rooms/:code/device/:action{ws|cmd}", async (c) => {
+  const code = norm(c.req.param("code"));
+  if (!code) return c.text("bad code", 400);
+  const url = new URL(c.req.url);
+  url.searchParams.set("code", code);
+  return stub(c.env, code).fetch(new Request(url.toString(), c.req.raw));
+});
+
+app.get("/api/openapi.json", (c) => c.json(openapi));
+app.get("/api/docs", (c) => c.html(swaggerHtml));
 
 // WS / device poll / estop / state は全部 RoomDO へ転送
 app.all("/api/rooms/:code/:action{ws|device|estop|state}", async (c) => {

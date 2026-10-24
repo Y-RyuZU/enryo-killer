@@ -37,6 +37,8 @@ export type Snapshot = {
   winnerSeat: Seat | null;
   deviceOnline: boolean;
   lastDevice?: DeviceCmd | null;
+  devicePayload?: MovePayload | null; // ESP32 (WS) に最後に送ったコマンド
+  deviceWsCount?: number;
   me?: { playerId: string; seat: Seat | null; tension: number; status: Status };
 };
 
@@ -73,3 +75,8 @@ export type DeviceCmd = {
   goal_y_mm?: number;
   feed_mm_s?: number;
 };
+
+// ===== ESP32 WebSocket (device/ws) =====
+export type MovePayload = "forward" | "backward" | "turn_right" | "turn_left" | "stop";
+export const MOVE_PAYLOADS: MovePayload[] = ["forward", "backward", "turn_right", "turn_left", "stop"];
+export type DeviceWsMsg = { payload: MovePayload };
