@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Mode, Params, Plate, SEATS, SEAT_LABEL, Seat, Snapshot, createRoom, joinUrl, sanitizeCode, useRoom } from "./api";
+import { Mode, Params, Plate, SEATS, SEAT_LABEL, SEAT_LETTER, Seat, Snapshot, createRoom, joinUrl, DEMO_ROOM, sanitizeCode, useRoom } from "./api";
 import { JoinQR, JoinQROverlay } from "./JoinQR";
 
 const SEAT_XY: Record<Seat, [number, number]> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
@@ -18,7 +18,8 @@ const SLIDERS: { k: keyof Params; label: string; min: number; max: number; step:
 
 export function Sim() {
   const qs = new URLSearchParams(location.search);
-  const [code, setCode] = useState<string | null>(sanitizeCode(qs.get("room")) || null);
+  // 部屋作成はアーカイブ: ?new=1 のときだけ「部屋をつくる」画面。通常は固定のデモ部屋
+  const [code, setCode] = useState<string | null>(sanitizeCode(qs.get("room")) || (qs.get("new") === "1" ? null : DEMO_ROOM));
   const { snap, connected, send } = useRoom(code, "viewer");
   const [qrBig, setQrBig] = useState(qs.get("qr") === "1");
 
@@ -76,7 +77,7 @@ export function Sim() {
   );
 }
 
-function Table({ snap }: { snap: Snapshot }) {
+export function Table({ snap, letters = false }: { snap: Snapshot; letters?: boolean }) {
   // 軌跡 (クライアント側だけで保持)
   const [trail, setTrail] = useState<[number, number][]>([]);
   const lastTick = useRef(-1);
@@ -129,7 +130,7 @@ function Table({ snap }: { snap: Snapshot }) {
             <g transform={`translate(${lx} ${ly})`}>
               <rect x="-0.27" y="-0.15" width="0.54" height="0.3" rx="0.05"
                 fill={p ? (isLead ? "#e8443a" : "#2a211b") : "#1a1512"} stroke={isLead ? "#ffb3ad" : "#5a4a3c"} strokeWidth="0.012" />
-              <text y="-0.04" textAnchor="middle" className="seat-dir">{SEAT_LABEL[s]}</text>
+              <text y="-0.04" textAnchor="middle" className="seat-dir">{letters ? `${SEAT_LETTER[s]} ${SEAT_LABEL[s]}` : SEAT_LABEL[s]}</text>
               <text y="0.06" textAnchor="middle" className="seat-name">{p ? p.name : "空席"}</text>
               {p && <rect x="-0.22" y="0.09" width="0.44" height="0.03" rx="0.015" fill="#00000066" />}
               {p && <rect x="-0.22" y="0.09" width={0.44 * Math.min(1, t)} height="0.03" rx="0.015" fill="#f2d649" />}

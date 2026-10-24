@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { C2S, S2C, Snapshot } from "../../server/src/shared";
+import type { C2S, S2C, Seat, Snapshot } from "../../server/src/shared";
 export * from "../../server/src/shared";
 
 // Tauri で包むときは VITE_API_BASE=https://xxx.workers.dev を指定 (未指定=同一オリジン)
@@ -77,3 +77,78 @@ export function useRoom(code: string | null, role: "player" | "viewer", playerId
 }
 
 export const SEAT_LABEL = { N: "北", E: "東", S: "南", W: "西" } as const;
+
+// ===== デモ用 固定部屋 (部屋作成/コード入力はアーカイブ: /join や ?room= で旧フローも使える) =====
+export const DEMO_ROOM = "ABCD"; // 8no の ESP32 もここに繋がっている
+/** ?room= があればそれ、無ければ固定のデモ部屋 */
+export const roomFromUrl = () => sanitizeCode(new URLSearchParams(location.search).get("room")) || DEMO_ROOM;
+
+// プレイヤー A〜D = 席 北/東/南/西
+export type Letter = "A" | "B" | "C" | "D";
+export const LETTERS: Letter[] = ["A", "B", "C", "D"];
+export const SEAT_LETTER: Record<Seat, Letter> = { N: "A", E: "B", S: "C", W: "D" };
+export const LETTER_SEAT: Record<Letter, Seat> = { A: "N", B: "E", C: "S", D: "W" };
+export const seatTitle = (s: Seat) => `${SEAT_LETTER[s]}（${SEAT_LABEL[s]}）`;
+const roomQs = (code: string) => (code === DEMO_ROOM ? "" : `?room=${encodeURIComponent(code)}`);
+export const seatUrl = (seat: Seat, code: string) => `${publicOrigin()}/${SEAT_LETTER[seat].toLowerCase()}${roomQs(code)}`;
+export const hostUrl = (code: string) => `${publicOrigin()}/host${roomQs(code)}`;
+
+/** REST 呼び出し (device/cmd, device/xy, device/mode, estop など)。失敗しても例外にせず JSON を返す */
+export async function roomApi(code: string, path: string, body?: unknown, method = "POST"): Promise<any> {
+  try {
+    const r = await fetch(`${API_BASE}/api/rooms/${encodeURIComponent(code)}/${path}`, {
+      method,
+      headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const text = await r.text();
+    try { return { status: r.status, ...JSON.parse(text) }; } catch { return { status: r.status, ok: r.ok, text }; }
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/** 席を空ける: その席の playerId で一瞬 WS を開いて leave を送る (サーバー変更なしで追い出せる) */
+export function kickSeat(code: string, playerId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const q = new URLSearchParams({ role: "player", playerId });
+    const ws = new WebSocket(`${wsBase()}/api/rooms/${encodeURIComponent(code)}/ws?${q}`);
+    const done = () => { try { ws.close(); } catch {} resolve(); };
+    ws.onopen = () => { ws.send(JSON.stringify({ t: "leave" } satisfies C2S)); setTimeout(done, 300); };
+    ws.onerror = done;
+    setTimeout(done, 3000);
+  });
+}
+
+/** テスト用ボット: 指定席に座って power を 8Hz で送り続ける (ホスト画面から 4 人分シミュレート) */
+export function useBot(code: string, seat: Seat, enabled: boolean, power: number) {
+  const powerRef = useRef(power);
+  powerRef.current = power;
+  useEffect(() => {
+    if (!enabled) return;
+    const playerId = `bot-${SEAT_LETTER[seat]}`;
+    let alive = true;
+    let ws: WebSocket | null = null;
+    let iv: number | undefined;
+    let retry: number | undefined;
+    const open = () => {
+      const q = new URLSearchParams({ role: "player", playerId });
+      ws = new WebSocket(`${wsBase()}/api/rooms/${encodeURIComponent(code)}/ws?${q}`);
+      ws.onopen = () => {
+        ws!.send(JSON.stringify({ t: "join", playerId, name: `BOT-${SEAT_LETTER[seat]}`, seat } satisfies C2S));
+        iv = window.setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "pull", power: powerRef.current } satisfies C2S));
+        }, 125);
+      };
+      ws.onclose = () => { clearInterval(iv); if (alive) retry = window.setTimeout(open, 1000); };
+    };
+    open();
+    return () => {
+      alive = false;
+      clearInterval(iv);
+      clearTimeout(retry);
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "leave" } satisfies C2S));
+      setTimeout(() => ws?.close(), 100);
+    };
+  }, [code, seat, enabled]);
+}

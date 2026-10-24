@@ -68,7 +68,7 @@ export function Mobile() {
 
 const MAX_DRAG = 260; // viewBox単位: これだけ引いたら power=1
 
-function Rope({ snap, seat, send, connected }: { snap: Snapshot; seat: Seat; send: (m: any) => void; connected: boolean }) {
+export function Rope({ snap, seat, send, connected, title, onTitleClick }: { snap: Snapshot; seat: Seat; send: (m: any) => void; connected: boolean; title?: string; onTitleClick?: () => void }) {
   const [drag, setDrag] = useState(0);
   const start = useRef<number | null>(null);
   const power = Math.min(1, drag / MAX_DRAG);
@@ -107,7 +107,7 @@ function Rope({ snap, seat, send, connected }: { snap: Snapshot; seat: Seat; sen
     <div className={`m-screen rope-screen st-${status}`}>
       <div className="rope-top">
         <div>
-          <div className="seat-chip">{SEAT_LABEL[seat]}の席・{snap.seats[seat]?.name}</div>
+          <div className="seat-chip" onClick={onTitleClick}>{title ?? `${SEAT_LABEL[seat]}の席`}・{snap.seats[seat]?.name}</div>
           <div className="room-chip">ROOM {snap.code} {!connected && "（再接続中）"}</div>
         </div>
         <MiniMap snap={snap} seat={seat} />

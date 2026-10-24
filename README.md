@@ -21,8 +21,16 @@ pnpm dev:server   # wrangler dev → http://127.0.0.1:8787  (Cloudflare ログ�
 pnpm dev:web      # vite → http://localhost:5173  (/api は 8787 にプロキシ)
 ```
 
-- PC: `http://<PCのIP>:5173/sim` → 「部屋をつくる」→ 4文字コードが出る
-- スマホ: `http://<PCのIP>:5173/?room=XXXX` → 名前と席 (東西南北) をタップ → 縄画面
+**デモ用 GUI (部屋は固定 `ABCD`)** — 本番: https://ek.ryuzu.dev/host
+- `/host` ホスト管理画面: 席ごとの接続/引く力・合力・皿・ESP32 出力・イベントログ、開始/停止/リセット/緊急停止、
+  モード切替、手動テスト (WASD/矢印, 速度・長さスライダー, B モードは XY パッド)、旋回キャリブ、係数スライダー、
+  席ごとの QR / BOT (スマホ無しテスト) / 空ける。キー: Space/Esc=緊急停止 Enter=開始 R=リセット X=停止
+- `/a` `/b` `/c` `/d` 席画面 (A=北 B=東 C=南 D=西): 開くだけで着席 → 縄画面。席が他端末で使用中なら「この端末で使う」
+- 別の部屋を使うときは `?room=XXXX` を付ける (例 `/host?room=TEST`, `/a?room=TEST`)
+
+旧フロー (アーカイブ、残してある): `/sim?new=1` で部屋作成、`/join` or `/?room=XXXX` で名前+席選択
+
+GUI の E2E: `PLAYWRIGHT_BROWSERS_PATH=.playwright node scripts/gui-smoke.mjs --base http://127.0.0.1:8787` (使い捨て部屋 + 偽 ESP32)
 - PCで「開始」。縄を下にドラッグした量 = 引く力。4人の引く力を合算した方向へ皿がじわじわ動き、決着距離に入ったら勝ち
 
 テスト:
