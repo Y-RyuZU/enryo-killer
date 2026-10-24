@@ -1,0 +1,19 @@
+{
+  "name": "enryo-killer",
+  "private": true,
+  "scripts": {
+    "dev:server": "pnpm --filter server dev",
+    "dev:web": "pnpm --filter web dev",
+    "test:e2e": "node scripts/fake-players.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {},
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "sharp",
+      "playwright"
+    ]
+  }
+}

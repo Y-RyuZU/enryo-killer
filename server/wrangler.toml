@@ -1,0 +1,18 @@
+name = "enryo-killer"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# web/ をビルドした静的ファイルも同じ Worker で配信 (デプロイ時 1 つで済む)
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "RoomDO"
+
+# 無料枠は SQLite バックエンドの DO のみ → new_sqlite_classes 必須
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDO"]
