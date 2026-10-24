@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase, MovePayload, XyMsg } from "./shared";
+import { DEFAULT_PARAMS, Params, Plate, SEATS, Seat, DeviceCmd, Mode, Phase, MovePayload, XyMsg, DeviceWsMsg } from "./shared";
 
 export const SEAT_POS: Record<Seat, { x: number; y: number }> = {
   N: { x: 0, y: -1 },
@@ -12,7 +12,22 @@ export const DEVICE_TTL_MS = 600;
 export const PULL_STALE_MS = 1500;
 
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
+export const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
+export const wrap360 = (d: number) => ((d % 360) + 360) % 360;
+/** 方位誤差の正規化 (turn = dh / これ)。turnRateDegPerSec とは別物なので固定 */
+export const TURN_ERR_NORM_DEG = 90;
+
+// ===== IMU 方位補正 =====
+/** 端末相対 yaw + offset -> 卓基準の絶対方位 */
+export const imuHeading = (yawDeg: number, offsetDeg: number) => wrap360(yawDeg + offsetDeg);
+/** 「今の yaw は卓方位 target」とみなす offset */
+export const imuOffsetFor = (targetHeadingDeg: number, yawDeg: number) => wrap360(targetHeadingDeg - yawDeg);
+/** 角度の折返しに強い相補フィルタ (blend=1 で IMU 値そのまま) */
+export const fuseHeading = (drDeg: number, imuDeg: number, blend: number) =>
+  wrap360(drDeg + clamp(blend, 0, 1) * wrap180(imuDeg - drDeg));
+/** 旋回キャリブ: 回った角度と時間から deg/s */
+export const turnRateFrom = (measuredDeg: number, durationMs: number) =>
+  clamp(Math.abs(measuredDeg) / (Math.max(100, durationMs) / 1000), 5, 720);
 
 export type StepInput = {
   powers: Partial<Record<Seat, number>>; // 0..1 現在の引っ張り
@@ -20,6 +35,7 @@ export type StepInput = {
   plate: Plate;
   params: Params;
   dt: number; // sec
+  headingOverrideDeg?: number | null; // IMU 由来の実測方位 (新鮮なときだけ)。null = dead reckoning
 };
 export type StepOutput = {
   tensions: Partial<Record<Seat, number>>;
@@ -27,10 +43,11 @@ export type StepOutput = {
   leaderSeat: Seat | null;
   winnerSeat: Seat | null;
   targetDirDeg: number | null;
+  headingSource: "imu" | "dr";
 };
 
 /** 純関数: 1 tick 分の物理/判定 */
-export function step({ powers, tensions, plate, params, dt }: StepInput): StepOutput {
+export function step({ powers, tensions, plate, params, dt, headingOverrideDeg = null }: StepInput): StepOutput {
   const p = { ...DEFAULT_PARAMS, ...params };
   const k = Math.pow(p.decay, dt / 0.5); // decay は 0.5s あたりの値
   const nt: Partial<Record<Seat, number>> = {};
@@ -56,7 +73,9 @@ export function step({ powers, tensions, plate, params, dt }: StepInput): StepOu
     }
   }
 
-  const np = { ...plate };
+  const headingSource = headingOverrideDeg == null ? "dr" : "imu";
+  const h0 = headingOverrideDeg ?? plate.headingDeg; // 実測があればそこを起点に推定
+  const np = { ...plate, headingDeg: h0 };
   let targetDirDeg: number | null = null;
   if (leaderSeat) {
     np.speed = clamp(mag * p.gain, 0, 1);
@@ -67,9 +86,10 @@ export function step({ powers, tensions, plate, params, dt }: StepInput): StepOu
     const r = Math.hypot(np.x, np.y);
     if (r > 1) { np.x /= r; np.y /= r; }
     targetDirDeg = ((Math.atan2(fx, -fy) * 180) / Math.PI + 360) % 360; // 0=N 時計回り
-    // オープンループの向き推定: 最大 90°/s で目標方向へ回す
-    const dh = wrap180(targetDirDeg - plate.headingDeg);
-    np.headingDeg = (plate.headingDeg + clamp(dh, -90 * dt, 90 * dt) + 360) % 360;
+    // 向き推定: 最大 turnRateDegPerSec (既定 90°/s, キャリブで実測値) で目標方向へ回す。IMU 実測があればそこが起点
+    const rate = p.turnRateDegPerSec > 0 ? p.turnRateDegPerSec : 90;
+    const dh = wrap180(targetDirDeg - h0);
+    np.headingDeg = (h0 + clamp(dh, -rate * dt, rate * dt) + 360) % 360;
   } else {
     np.speed = 0;
   }
@@ -78,7 +98,7 @@ export function step({ powers, tensions, plate, params, dt }: StepInput): StepOu
     const sp = SEAT_POS[s];
     if (Math.hypot(sp.x - np.x, sp.y - np.y) < p.winRadius && nt[s] !== undefined) winnerSeat = s;
   }
-  return { tensions: nt, plate: np, leaderSeat, winnerSeat, targetDirDeg };
+  return { tensions: nt, plate: np, leaderSeat, winnerSeat, targetDirDeg, headingSource };
 }
 
 /** モード別アダプタ: 共通の皿状態 -> デバイスコマンド */
@@ -101,7 +121,7 @@ export function deviceCmd(opts: {
     const tgt = SEAT_POS[leaderSeat];
     const dirDeg = targetDirDeg ?? ((Math.atan2(tgt.x - plate.x, -(tgt.y - plate.y)) * 180) / Math.PI + 360) % 360;
     const dh = wrap180(dirDeg - plate.headingDeg);
-    const turn = clamp(dh / 90, -1, 1);
+    const turn = clamp(dh / TURN_ERR_NORM_DEG, -1, 1);
     const fwd = Math.abs(dh) < 30 ? plate.speed : 0;
     const r = (n: number) => Math.round(n * 1000) / 1000;
     return { ...base, dirDeg: r(dirDeg), speed: r(plate.speed), turn: r(turn), fwd: r(fwd) };
@@ -150,4 +170,22 @@ export function xyMsg(opts: { mode: Mode; estop: boolean; seq: number; x: number
     y_mm: Math.round(y * TABLE_RADIUS_MM),
     ...(opts.manual ? { manual: true } : {}),
   };
+}
+
+/** movePayload + 任意の speed。speedOut=0 なら {payload} だけ (従来と同一バイト列) */
+export function moveCommand(cmd: DeviceCmd, params: Params): DeviceWsMsg {
+  const payload = movePayload(cmd);
+  if ((params.speedOut ?? 0) < 0.5 || payload === "stop") return { payload };
+  // 前後進は皿の速度 (margin 由来) に追従、下限 minSpeedOut。旋回はフル (遅い旋回は止まりやすい)
+  const base = payload === "forward" || payload === "backward" ? cmd.fwd ?? cmd.speed ?? 0 : 1;
+  const min = clamp(params.minSpeedOut ?? 0.35, 0, 1);
+  return { payload, speed: Math.round(clamp(Math.max(base, min), 0, 1) * 100) / 100 };
+}
+
+/** 0..1 の speed を検証。省略 = undefined、範囲外 = null */
+export function parseSpeed(v: unknown): number | undefined | null {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  if (!isFinite(n) || n < 0 || n > 1) return null;
+  return Math.round(n * 1000) / 1000;
 }

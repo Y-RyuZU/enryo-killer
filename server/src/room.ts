@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
-import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS } from "./shared";
-import { PULL_STALE_MS, clamp, deviceCmd, movePayload, step } from "./logic";
+import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS, DeviceWsOut, CalibState, TurnDir } from "./shared";
+import type { DeviceWsMsg } from "./shared";
+import { PULL_STALE_MS, clamp, deviceCmd, moveCommand, step, fuseHeading, imuHeading, imuOffsetFor, wrap360, turnRateFrom, parseSpeed } from "./logic";
 import { xyMsg } from "./logic";
 import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg } from "./shared";
 
@@ -14,6 +15,8 @@ type Persisted = {
   seats: Partial<Record<Seat, Player>>;
   plate: Plate;
   winnerSeat: Seat | null;
+  imuOffsetDeg?: number; // 卓方位 = IMU yaw + offset (hibernation をまたいで保持)
+  imuBoot?: number; // offset を決めたときの ESP32 boot id
 };
 type Attach = { role: "player" | "viewer" | "device"; playerId?: string };
 
@@ -35,6 +38,8 @@ export class RoomDO extends DurableObject<Env> {
     seats: {},
     plate: freshPlate(),
     winnerSeat: null,
+    imuOffsetDeg: 0,
+    imuBoot: 0,
   };
   // volatile (メモリのみ。プレイ中は alarm で起き続けるので消えない)
   tick = 0;
@@ -53,6 +58,16 @@ export class RoomDO extends DurableObject<Env> {
   lastXy: XyMsg | null = null;
   manualXy: { x: number; y: number; until: number } | null = null;
   manualXyTimer: ReturnType<typeof setInterval> | null = null;
+  deviceSpeed: number | null = null;
+  // IMU (USE_IMU ビルドの ESP32 からの報告)
+  imuLast: { yawDeg: number; rateDps: number; devMs: number; at: number } | null = null;
+  imuZeroPending = false;
+  deviceHasImu = false;
+  headingSource: "imu" | "dr" = "dr";
+  // 旋回キャリブレーション
+  calib: CalibState | null = null;
+  calibSeq = 0;
+  calibTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -88,6 +103,8 @@ export class RoomDO extends DurableObject<Env> {
       this.broadcast();
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
+    if (path.endsWith("/device/calibrate/result") && req.method === "POST") return this.calibResult(await readJson(req));
+    if (path.endsWith("/device/calibrate") && req.method === "POST") return this.startCalib(await readJson(req));
     if (path.endsWith("/device/cmd") && req.method === "POST") {
       // 疎通/手動テスト用: 指定コマンドを durationMs の間 (500ms ごとに再送) 流し、その後 stop
       let body: any = {};
@@ -96,8 +113,10 @@ export class RoomDO extends DurableObject<Env> {
       if (!MOVE_PAYLOADS.includes(payload)) return Response.json({ ok: false, error: `payload must be one of ${MOVE_PAYLOADS.join(", ")}` }, { status: 400 });
       if (this.s.estop && payload !== "stop") return Response.json({ ok: false, error: "estop 中 (解除してから)" }, { status: 409 });
       const durationMs = clamp(Number(body?.durationMs ?? 1000) || 1000, 100, 5000);
-      this.manual(payload, durationMs);
-      return Response.json({ ok: true, payload, durationMs, devices: this.ctx.getWebSockets("device").length });
+      const speed = parseSpeed(body?.speed);
+      if (speed === null) return Response.json({ ok: false, error: "speed は 0..1 (省略でファームの SPEED/TURN_SPEED)" }, { status: 400 });
+      this.manual(speed === undefined || payload === "stop" ? { payload } : { payload, speed }, durationMs);
+      return Response.json({ ok: true, payload, durationMs, ...(speed !== undefined ? { speed } : {}), devices: this.ctx.getWebSockets("device").length });
     }
     if (path.endsWith("/ws")) {
       if (req.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
@@ -118,7 +137,7 @@ export class RoomDO extends DurableObject<Env> {
         phase: this.s.phase,
         estop: this.s.estop,
         seq: ++this.deviceSeq,
-        plate: this.s.plate,
+        plate: this.livePlate(),
         leaderSeat: this.leaderSeat,
         params: this.s.params,
         targetDirDeg: this.targetDirDeg,
@@ -139,7 +158,7 @@ export class RoomDO extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     const att0 = ws.deserializeAttachment() as Attach | null;
     if (att0?.role === "device" && this.s.mode === "B") this.sendXy(ws); // XY 機は ping ごとに最新目標を返す
-    if (att0?.role === "device") return; // デバイスからの送信 (ping 等) は無視
+    if (att0?.role === "device") return this.onDeviceMessage(raw); // IMU 報告など。ping 等は無視
     let msg: C2S;
     try {
       msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
@@ -180,6 +199,7 @@ export class RoomDO extends DurableObject<Env> {
             if (k in DEFAULT_PARAMS && typeof v === "number" && isFinite(v)) (this.s.params as any)[k] = v;
           }
         }
+        if (msg.zeroImu) this.imuZeroPending = true;
         await this.save();
         return this.broadcast();
       }
@@ -204,6 +224,7 @@ export class RoomDO extends DurableObject<Env> {
       this.s.phase = "lobby";
       this.leaderSeat = null;
     } else if (cmd === "estop") {
+      if (this.calib?.state === "spinning") { this.clearCalibTimer(); this.calib = { ...this.calib, state: "failed", err: "estop" }; }
       this.s.estop = true;
       this.s.phase = "lobby";
       this.leaderSeat = null;
@@ -226,6 +247,8 @@ export class RoomDO extends DurableObject<Env> {
     this.powers = {};
     this.leaderSeat = null;
     this.tick = 0;
+    this.headingSource = "dr";
+    this.imuZeroPending = true; // リセット時は「皿は N 向きに置き直した」とみなし、次の IMU 報告で基準を取り直す
   }
 
   async alarm() {
@@ -237,7 +260,11 @@ export class RoomDO extends DurableObject<Env> {
       const p = this.powers[s];
       powers[s] = p && now - p.at < PULL_STALE_MS ? p.power : 0;
     }
-    const out = step({ powers, tensions: this.tensions, plate: this.s.plate, params: this.s.params, dt: TICK_MS / 1000 });
+    const out = step({
+      powers, tensions: this.tensions, plate: this.s.plate, params: this.s.params, dt: TICK_MS / 1000,
+      headingOverrideDeg: this.fusedHeading(),
+    });
+    this.headingSource = out.headingSource;
     this.tick++;
     this.tensions = out.tensions;
     this.s.plate = out.plate;
@@ -303,6 +330,11 @@ export class RoomDO extends DurableObject<Env> {
       deviceWsCount: this.ctx.getWebSockets("device").length,
       deviceMode: MODE_TO_DEVICE_MODE[this.s.mode],
       xy: this.lastXy,
+      deviceSpeed: this.deviceSpeed,
+      deviceHasImu: this.deviceHasImu,
+      deviceImu: this.imuView(),
+      headingSource: this.headingSource,
+      calib: this.calib,
       ...(viewer ? { lastDevice: this.lastDevice } : {}),
     };
     if (forPlayer !== undefined) {
@@ -330,9 +362,13 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   // ---------- ESP32 WebSocket ----------
-  sendDevice(payload: MovePayload, only?: WebSocket) {
-    this.devicePayload = payload;
-    const msg = JSON.stringify({ payload });
+  sendDevice(out: MovePayload | DeviceWsOut, only?: WebSocket) {
+    const o: DeviceWsOut = typeof out === "string" ? { payload: out } : out;
+    if ("payload" in o) {
+      this.devicePayload = o.payload;
+      this.deviceSpeed = o.speed ?? null;
+    }
+    const msg = JSON.stringify(o); // speed が無ければ従来と同一の {"payload":"..."}
     for (const ws of only ? [only] : this.ctx.getWebSockets("device")) {
       try { ws.send(msg); } catch {}
     }
@@ -342,18 +378,21 @@ export class RoomDO extends DurableObject<Env> {
   autoDevice() {
     if (this.s.mode === "B") this.sendXy();
     if (Date.now() < this.manualUntil) return;
+    if (this.calib?.state === "spinning" && !this.s.estop) return; // キャリブ中は自動制御を抑制
     const cmd = deviceCmd({
       type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
-      plate: this.s.plate, leaderSeat: this.leaderSeat, params: this.s.params, targetDirDeg: this.targetDirDeg,
+      plate: this.livePlate(), leaderSeat: this.leaderSeat, params: this.s.params, targetDirDeg: this.targetDirDeg,
     });
-    this.sendDevice(movePayload(cmd));
+    this.sendDevice(moveCommand(cmd, this.s.params));
   }
 
-  manual(payload: MovePayload, durationMs: number) {
+  manual(out: MovePayload | DeviceWsMsg, durationMs: number) {
+    const msg: DeviceWsMsg = typeof out === "string" ? { payload: out } : out;
+    const payload = msg.payload;
     if (this.manualTimer) clearInterval(this.manualTimer);
     this.manualTimer = null;
     this.manualUntil = 0;
-    this.sendDevice(payload);
+    this.sendDevice(msg);
     if (payload === "stop" || durationMs <= 0) { this.broadcast(); return; }
     this.manualUntil = Date.now() + durationMs;
     this.manualTimer = setInterval(() => {
@@ -362,9 +401,10 @@ export class RoomDO extends DurableObject<Env> {
         this.manualTimer = null;
         this.manualUntil = 0;
         this.sendDevice("stop");
+        if (this.calib?.state === "spinning" && this.calib.via === "manual") this.calib = { ...this.calib, state: "awaiting_measure" };
         this.autoDevice();
         this.broadcast();
-      } else this.sendDevice(payload);
+      } else this.sendDevice(msg);
     }, 250);
     this.broadcast();
   }
@@ -427,8 +467,156 @@ export class RoomDO extends DurableObject<Env> {
     return null;
   }
 
+  // ---------- IMU 方位補正 ----------
+  /** 新鮮な IMU 報告があれば卓基準の方位 (dead reckoning と blend)、無ければ null */
+  fusedHeading(): number | null {
+    const l = this.imuLast;
+    if (!l || this.imuZeroPending) return null;
+    if (Date.now() - l.at > (this.s.params.imuMaxAgeMs ?? 1500)) return null;
+    const blend = this.s.params.imuBlend ?? 1;
+    if (blend <= 0) return null;
+    return fuseHeading(this.s.plate.headingDeg, imuHeading(l.yawDeg, this.s.imuOffsetDeg ?? 0), blend);
+  }
+
+  /** tick 間でも最新の実測方位を使った皿 */
+  livePlate(): Plate {
+    const h = this.fusedHeading();
+    return h == null ? this.s.plate : { ...this.s.plate, headingDeg: h };
+  }
+
+  imuView(): Snapshot["deviceImu"] {
+    const l = this.imuLast;
+    if (!l) return null;
+    const r = (n: number) => Math.round(n * 10) / 10;
+    const off = this.s.imuOffsetDeg ?? 0;
+    return {
+      yawDeg: r(l.yawDeg), offsetDeg: r(off), headingDeg: r(imuHeading(l.yawDeg, off)),
+      rateDps: r(l.rateDps), ageMs: Date.now() - l.at, fresh: this.fusedHeading() != null,
+    };
+  }
+
+  onDeviceMessage(raw: string | ArrayBuffer) {
+    let m: any;
+    try { m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch { return; }
+    if (!m || typeof m !== "object") return;
+    const now = Date.now();
+    switch (m.t) {
+      case "hello": {
+        const boot = Number(m.boot) || 0;
+        this.deviceHasImu = m.imu === 1 || m.imu === true;
+        if (this.deviceHasImu && boot !== (this.s.imuBoot ?? 0)) {
+          // 再起動 = yaw が 0 から再スタート。offset を取り直す
+          this.s.imuBoot = boot;
+          this.imuLast = null;
+          this.imuZeroPending = true;
+        }
+        this.broadcast();
+        return;
+      }
+      case "imu": {
+        const yaw = Number(m.yaw), ms = Number(m.ms);
+        if (!isFinite(yaw) || !isFinite(ms)) return;
+        const prev = this.imuLast;
+        if (prev && ms < prev.devMs) { this.imuLast = null; this.imuZeroPending = true; } // millis 巻き戻り = 無言の再起動
+        else if (prev && ms === prev.devMs) return;
+        this.deviceHasImu = true;
+        if (this.imuZeroPending) {
+          // プレイ中の取り直しは現在の推定方位に、それ以外は「皿は N 向き」= 0 に合わせる
+          const target = this.s.phase === "playing" ? this.s.plate.headingDeg : 0;
+          this.s.imuOffsetDeg = imuOffsetFor(target, wrap360(yaw));
+          this.imuZeroPending = false;
+          void this.save();
+        }
+        this.imuLast = { yawDeg: wrap360(yaw), rateDps: Number(m.gz) || 0, devMs: ms, at: now };
+        return; // broadcast しない (次の tick で反映)
+      }
+      case "calib": {
+        const c = this.calib;
+        if (!c || c.via !== "imu" || c.state !== "spinning" || c.id !== Number(m.id)) return;
+        this.clearCalibTimer();
+        if (m.ok === 0 || m.ok === false) {
+          this.calib = { ...c, state: "failed", err: String(m.err ?? "imu") };
+        } else {
+          const dps = Number(m.dps);
+          const rate = isFinite(dps) && dps > 0 ? clamp(dps, 5, 720) : turnRateFrom(Number(m.deg) || 0, Number(m.ms) || c.durationMs);
+          this.s.params.turnRateDegPerSec = Math.round(rate * 10) / 10;
+          this.calib = { ...c, state: "done", measuredDeg: Number(m.deg), turnRateDegPerSec: this.s.params.turnRateDegPerSec };
+          void this.save();
+        }
+        this.broadcast();
+        return;
+      }
+    }
+  }
+
+  // ---------- 旋回キャリブレーション ----------
+  clearCalibTimer() {
+    if (this.calibTimer) clearTimeout(this.calibTimer);
+    this.calibTimer = null;
+  }
+
+  async startCalib(body: any): Promise<Response> {
+    const bad = (status: number, error: string) => Response.json({ ok: false, error }, { status });
+    if (this.s.estop) return bad(409, "estop 中 (解除してから)");
+    if (this.s.phase === "playing") return bad(409, "プレイ中は不可 (stop してから)");
+    if (this.ctx.getWebSockets("device").length === 0) return bad(409, "device 未接続");
+    const dir: TurnDir = body?.dir === "left" ? "left" : "right";
+    const durationMs = clamp(Number(body?.durationMs ?? 2000) || 2000, 300, 5000);
+    const sp = parseSpeed(body?.speed);
+    if (sp === null) return bad(400, "speed は 0..1");
+    const speed = sp === undefined ? 1 : Math.max(0.2, sp);
+    const via = body?.via === "imu" ? "imu" : body?.via === "manual" ? "manual" : this.deviceHasImu ? "imu" : "manual";
+    if (via === "imu" && !this.deviceHasImu) return bad(409, "IMU からの報告が無い (USE_IMU 0 のビルド?) → via=manual で");
+    this.clearCalibTimer();
+    const id = ++this.calibSeq;
+    this.calib = { id, dir, durationMs, speed, via, startedAt: Date.now(), state: "spinning" };
+    const payload: MovePayload = dir === "right" ? "turn_right" : "turn_left";
+    if (via === "imu") {
+      // ESP32 が自分で durationMs 回って実測 deg/s を返す。返事が無ければ failed
+      this.manual("stop", 0);
+      this.sendDevice({ cmd: "calib", id, dir, ms: durationMs, speed });
+      this.calibTimer = setTimeout(() => {
+        this.calibTimer = null;
+        if (this.calib?.id === id && this.calib.state === "spinning") {
+          this.calib = { ...this.calib, state: "failed", err: "timeout (ESP32 から calib 結果が来ない)" };
+          this.sendDevice("stop");
+          this.broadcast();
+        }
+      }, durationMs + 3000);
+    } else {
+      // サーバー駆動で durationMs 回す → 実測角度を /device/calibrate/result へ
+      this.manual(speed < 1 ? { payload, speed } : { payload }, durationMs);
+    }
+    this.broadcast();
+    return Response.json({
+      ok: true, calibId: id, via, dir, durationMs, speed,
+      ...(via === "manual" ? { note: "回り終わったら実測角度 (度) を POST /device/calibrate/result {\"measuredDeg\": N} で送ってね" } : {}),
+    });
+  }
+
+  async calibResult(body: any): Promise<Response> {
+    const direct = Number(body?.turnRateDegPerSec);
+    const c = this.calib;
+    if (body?.turnRateDegPerSec !== undefined && isFinite(direct) && direct > 0) {
+      this.s.params.turnRateDegPerSec = Math.round(clamp(direct, 5, 720) * 10) / 10;
+    } else {
+      const deg = Number(body?.measuredDeg);
+      if (!isFinite(deg) || Math.abs(deg) < 1) return Response.json({ ok: false, error: "measuredDeg (度) か turnRateDegPerSec が必要" }, { status: 400 });
+      const ms = Number(body?.durationMs) || c?.durationMs || 2000;
+      this.s.params.turnRateDegPerSec = Math.round(turnRateFrom(deg, ms) * 10) / 10;
+      if (c) this.calib = { ...c, state: "done", measuredDeg: deg, turnRateDegPerSec: this.s.params.turnRateDegPerSec };
+    }
+    await this.save();
+    this.broadcast();
+    return Response.json({ ok: true, turnRateDegPerSec: this.s.params.turnRateDegPerSec, calib: this.calib });
+  }
+
   err(ws: WebSocket, message: string) {
     const m: S2C = { t: "error", message };
     try { ws.send(JSON.stringify(m)); } catch {}
   }
+}
+
+async function readJson(req: Request): Promise<any> {
+  try { return await req.json(); } catch { return {}; }
 }

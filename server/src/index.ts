@@ -19,8 +19,8 @@ app.post("/api/rooms", (c) => {
   return c.json({ code });
 });
 
-// ESP32 WebSocket / 手動コマンド
-app.all("/api/rooms/:code/device/:action{ws|cmd}", async (c) => {
+// ESP32 WebSocket / 手動コマンド / 旋回キャリブ
+app.all("/api/rooms/:code/device/:action{ws|cmd|calibrate|calibrate/result}", async (c) => {
   const code = norm(c.req.param("code"));
   if (!code) return c.text("bad code", 400);
   const url = new URL(c.req.url);

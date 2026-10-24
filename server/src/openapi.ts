@@ -6,19 +6,35 @@ export const openapi = {
   openapi: "3.0.3",
   info: {
     title: "遠慮の塊 解消マシン API",
-    version: "0.2.0",
+    version: "0.3.0",
     description: [
       "## ESP32 (タイヤロボ) WebSocket",
       "`wss://<host>/api/rooms/{code}/device/ws` に接続すると、サーバーから次の JSON が push されます:",
       "```json",
-      '{ "payload": "forward" }   // forward | backward | turn_right | turn_left | stop',
+      '{ "payload": "forward" }                 // forward | backward | turn_right | turn_left | stop',
+      '{ "payload": "forward", "speed": 0.6 }   // speed (任意, 0..1) = ファームの SPEED/TURN_SPEED に対する倍率。省略 = 1',
       "```",
+      "- `payload` は常に先頭キー。`speed` が付くのは `POST /device/cmd` で speed 指定したとき、または params.speedOut=1 のときだけ (既定は従来どおり `{payload}` のみ)",
       "- 接続直後に現在のコマンド (通常 `stop`) を 1 回送信",
       "- 対戦中 (mode=A) は 0.5 秒ごとに送信。勝っている席の方向へ向くまで turn_*、向いたら forward",
       "- 停止/リセット/緊急停止/決着時は `stop`",
       "- **安全のため、ESP32 側で約 1.5 秒メッセージが来なければ停止、切断時も停止してください**",
       "- 疎通テストは下の `POST /device/cmd` (Try it out) で任意のコマンドを流せます",
-      "- デバイスから送ったメッセージは無視されます (keep-alive の ping に使って OK)",
+      "- `payload` の無いフレーム `{\"cmd\":\"calib\",\"id\":4,\"dir\":\"right\",\"ms\":2000,\"speed\":1}` は IMU ビルド向けの旋回キャリブ指示 (旧ファームは無視)",
+      "",
+      "## ESP32 → サーバー (任意: firmware の USE_IMU=1 ビルドのみ)",
+      "IMU (MPU6050 等) 付きなら実測方位を送ると、サーバーの方位推定 (dead reckoning) を上書き補正します。送らなければ従来どおり。",
+      "```json",
+      '{ "t": "hello", "fw": "1.1.0", "imu": 1, "boot": 2914837461 }   // 接続時。boot が変わったら方位基準を取り直す',
+      '{ "t": "imu", "yaw": 187.3, "gz": -12.4, "ms": 48213 }          // 5-7Hz。yaw=起動時基準の相対方位 (時計回り+)',
+      '{ "t": "calib", "id": 4, "dir": "right", "ms": 2000, "deg": 214.6, "dps": 107.3, "ok": 1 }',
+      "```",
+      "- 方位基準: リセット時に皿は N 向きに置かれているとみなし、次の imu 報告で offset を決める (config WS の `zeroImu: true` でも取り直し)",
+      "- `imuMaxAgeMs` (既定 1500ms) 報告が途絶えたら dead reckoning に戻る",
+      "- JSON でないメッセージ (ping 等) は無視",
+      "",
+      "## params (config WS `{t:'config', params:{...}}` で変更)",
+      "`maxSpeed, gain, decay, tieMargin, winRadius` に加え: `turnRateDegPerSec` (既定 90, キャリブで更新), `imuMaxAgeMs` (1500), `imuBlend` (0..1, 既定 1), `speedOut` (0/1, 既定 0), `minSpeedOut` (既定 0.35)",
       "",
       "## スマホ / PC 用 WebSocket",
       "`/api/rooms/{code}/ws?role=player&playerId=...` / `?role=viewer`。メッセージ型は server/src/shared.ts の C2S / S2C を参照",
@@ -50,15 +66,73 @@ export const openapi = {
                 properties: {
                   payload: { type: "string", enum: payloadEnum, example: "forward" },
                   durationMs: { type: "integer", minimum: 100, maximum: 5000, default: 1000 },
+                  speed: { type: "number", minimum: 0, maximum: 1, example: 0.6, description: "任意。ファームの SPEED/TURN_SPEED に対する倍率。省略時は従来どおり (=1)" },
                 },
               },
             },
           },
         },
         responses: {
-          200: { description: "送信した。devices = 接続中の ESP32 数", content: { "application/json": { example: { ok: true, payload: "forward", durationMs: 1000, devices: 1 } } } },
-          400: { description: "payload 不正" },
+          200: { description: "送信した。devices = 接続中の ESP32 数", content: { "application/json": { example: { ok: true, payload: "forward", durationMs: 1000, speed: 0.6, devices: 1 } } } },
+          400: { description: "payload / speed 不正" },
           409: { description: "緊急停止中" },
+        },
+      },
+    },
+    "/api/rooms/{code}/device/calibrate": {
+      post: {
+        summary: "旋回キャリブレーション開始 (その場で durationMs 回す)",
+        description: [
+          "lobby 中のみ (プレイ中 / estop 中 / device 未接続は 409)。**皿は載せた状態で** 計測推奨。",
+          "- `via=imu` (IMU ビルド): ESP32 が自分で回って実測 deg/s を返し、`params.turnRateDegPerSec` を自動更新",
+          "- `via=manual` (IMU なし): サーバーが turn_* を durationMs 流して止める → 回った角度を測って `POST /device/calibrate/result`",
+          "- `via` 省略時は IMU 報告があれば imu、無ければ manual。結果は state の `calib` / `params.turnRateDegPerSec`",
+        ].join("\n"),
+        parameters: [room],
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  dir: { type: "string", enum: ["right", "left"], default: "right" },
+                  durationMs: { type: "integer", minimum: 300, maximum: 5000, default: 2000 },
+                  speed: { type: "number", minimum: 0.2, maximum: 1, default: 1, description: "試合中の旋回と同じ 1 推奨" },
+                  via: { type: "string", enum: ["auto", "imu", "manual"], default: "auto" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "開始", content: { "application/json": { example: { ok: true, calibId: 1, via: "manual", dir: "right", durationMs: 2000, speed: 1 } } } },
+          409: { description: "estop / プレイ中 / device 未接続 / IMU 無しで via=imu" },
+        },
+      },
+    },
+    "/api/rooms/{code}/device/calibrate/result": {
+      post: {
+        summary: "旋回キャリブ結果 (実測角度 or 旋回速度を直接) を登録",
+        description: "`measuredDeg` = 直前の calibrate で回った角度 (度)。turnRateDegPerSec = |deg| / (durationMs/1000)。`turnRateDegPerSec` を直接指定しても OK",
+        parameters: [room],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  measuredDeg: { type: "number", example: 183 },
+                  durationMs: { type: "integer", description: "省略時は直前の calibrate の durationMs" },
+                  turnRateDegPerSec: { type: "number", example: 91.5 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "更新", content: { "application/json": { example: { ok: true, turnRateDegPerSec: 91.5 } } } },
+          400: { description: "measuredDeg / turnRateDegPerSec が無い" },
         },
       },
     },
