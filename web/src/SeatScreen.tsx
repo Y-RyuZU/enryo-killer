@@ -39,6 +39,9 @@ export function SeatScreen({ letter }: { letter: Letter }) {
 
   if (snap && seated) return <Rope snap={snap} seat={seat} send={send} connected={connected} title={`${letter}（${SEAT_LABEL[seat]}）`} onTitleClick={rename} />;
 
+  // 接続中 / 着席処理中は「サーバーに接続中」の文字だけ (amu 指示: 他の要素は全部なし)
+  if (!snap || !takenByOther) return <div className="seat-connecting">サーバーに接続中</div>;
+
   return (
     <div className="m-screen join seat-wait">
       <header className="brand">
@@ -47,18 +50,10 @@ export function SeatScreen({ letter }: { letter: Letter }) {
         <div className="seat-sub">{SEAT_LABEL[seat]}の席 · ROOM {code}</div>
       </header>
       <Karaage size={120} />
-      {!snap ? (
-        <p className="hint big">サーバーに接続中… <span className={`dot ${connected ? "on" : ""}`} /></p>
-      ) : takenByOther ? (
-        <>
-          <p className="hint big">この席は「{occupant!.name}」が使用中</p>
-          <button className="btn primary big" onClick={async () => { await kickSeat(code, occupant!.playerId); joinSent.current = 0; }}>
-            この端末で {seatTitle(seat)} を使う
-          </button>
-        </>
-      ) : (
-        <p className="hint big">着席中…</p>
-      )}
+      <p className="hint big">この席は「{occupant!.name}」が使用中</p>
+      <button className="btn primary big" onClick={async () => { await kickSeat(code, occupant!.playerId); joinSent.current = 0; }}>
+        この端末で {seatTitle(seat)} を使う
+      </button>
       {error && <div className="toast">{error}</div>}
     </div>
   );
