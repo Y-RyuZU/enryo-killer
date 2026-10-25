@@ -16,7 +16,7 @@ export function Landing() {
           </a>
         ))}
       </div>
-      <a className="landing-host" href={`/host${q}`}>ホスト / 管理画面</a>
+      <a className="landing-host" href={`/host${q}`} aria-label="ホスト / 管理画面">ホスト / 管理画面</a>
     </div>
   );
 }
