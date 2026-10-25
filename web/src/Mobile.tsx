@@ -151,12 +151,11 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
 
       <div className={`gauge ${snapped || turning || cooling ? "off" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : ""}</span></div>
 
-      {/* 負けた側の「取られた…」画面は無し (ゲームの趣旨と違うのでデザイン指示で削除)。勝った人だけ結果を出す */}
-      {snap.phase === "finished" && snap.winnerSeat === seat && (
+      {snap.phase === "finished" && (
         <div className="overlay">
           <div className="result-card">
-            {/* ゲット画面: 唐揚げイラストと見出しは無し、「今なら食べれそう！」だけ (デザイン指示) */}
-            <h2>今なら<br />食べれそう！</h2>
+            {/* ゲット画面: 「今なら食べれそう！」だけ / 取られた側: 「お皿が空になりました」だけ (デザイン指示) */}
+            {snap.winnerSeat === seat ? (<h2>今なら<br />食べれそう！</h2>) : (<h2>お皿が空に<br />なりました</h2>)}
             <small>ホストが次のゲームを始めるのを待ってね</small>
           </div>
         </div>
