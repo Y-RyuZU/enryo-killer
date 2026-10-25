@@ -272,7 +272,7 @@ details.hd-card[open] > summary { margin-bottom: 8px; }
 
 /* 引っ張り画面は背景 #000 (iPhone の上下も黒で塗る) */
 html:has(.rope-screen), html:has(.rope-screen) body,
-html:has(.landing), html:has(.landing) body { background: #f1e3c8 url("/home-bg.jpg") center / cover no-repeat; }
+html:has(.landing), html:has(.landing) body { background: #c27f43 url("/home-bg.jpg") center / cover no-repeat; }
 .landing .landing-host { color: #5a3e26; }
 .landing .landing-host:active { color: #2e1f12; }
 
