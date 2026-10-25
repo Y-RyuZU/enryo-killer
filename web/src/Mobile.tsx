@@ -150,9 +150,7 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
           </g>
           <circle cy="4" r="44" fill="transparent" />
         </g>
-        {drag === 0 && snap.phase === "playing" && !snapped && !turning && (
-          <text x="100" y={handleY + 70} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
-        )}
+        {/* 「こっそり引っ張る」ヒントは非表示 (デザイン指示) */}
       </svg>
 
       <div className={`gauge ${snapped || turning || cooling ? "off" : ""} ${danger ? "danger" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : ""}</span></div>
