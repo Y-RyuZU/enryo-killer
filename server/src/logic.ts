@@ -48,6 +48,8 @@ export type StepInput = {
    *  指定すると、実際に旋回コマンドを出していた間だけ向き推定を回す。
    *  undefined = 旧挙動 (毎 tick 目標へ向かって回ったとみなす。シミュ/テスト用) */
   turning?: "right" | "left" | null;
+  /** turning 時に実際に回っていたとみなす秒数 (起動遅れ turnDeadMs を差し引いた値)。省略 = dt */
+  turnDt?: number;
 };
 export type StepOutput = {
   tensions: Partial<Record<Seat, number>>;
@@ -59,7 +61,7 @@ export type StepOutput = {
 };
 
 /** 純関数: 1 tick 分の物理/判定 */
-export function step({ powers, tensions, plate, params, dt, headingOverrideDeg = null, turning }: StepInput): StepOutput {
+export function step({ powers, tensions, plate, params, dt, headingOverrideDeg = null, turning, turnDt }: StepInput): StepOutput {
   const p = { ...DEFAULT_PARAMS, ...params };
   const k = Math.pow(p.decay, dt / 0.5); // decay は 0.5s あたりの値
   const nt: Partial<Record<Seat, number>> = {};
@@ -106,7 +108,8 @@ export function step({ powers, tensions, plate, params, dt, headingOverrideDeg =
     else if (headingOverrideDeg != null || !turning) rot = 0; // IMU 実測あり / 旋回してない → 推定で回さない
     else {
       const sign = turning === "right" ? 1 : -1;
-      rot = Math.sign(dh) === sign ? sign * Math.min(rate * dt, Math.abs(dh)) : sign * rate * dt;
+      const td = Math.max(0, turnDt ?? dt);
+      rot = Math.sign(dh) === sign ? sign * Math.min(rate * td, Math.abs(dh)) : sign * rate * td;
     }
     np.headingDeg = (h0 + rot + 360) % 360;
   } else {

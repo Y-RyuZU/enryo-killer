@@ -31,6 +31,9 @@ export type Params = {
   turnStartDeg: number; // 目標方向とのずれがこれ以上なら旋回 (未満なら直進)。小さいほどすぐ曲がる (旧 30)
   turnPauseMs: number; // 直進→旋回に切り替わるとき、いったん止まる時間 (0 = 止まらない)
   backwardEnabled: number; // 0/1 行きたい方向が後ろ寄り (ずれ 90°超) なら、180°回らずにお尻を向けて backward で進む
+  turnStopDeg: number; // 旋回を始めたら、ずれがこれ未満になるまで旋回を続ける (ヒステリシス。turnStartDeg 以下)
+  turnDeadMs: number; // 旋回コマンド開始から実際に回り出すまでの遅れ。この間は向き推定を進めない (= 旋回が長く続く)
+  minTurnMs: number; // 一度旋回を始めたら最低この時間は旋回を続ける (0 = 無効)
 };
 export const DEFAULT_PARAMS: Params = {
   maxSpeed: 0.08, gain: 2, decay: 0.8, tieMargin: 0.05, winRadius: 0.35,
@@ -40,12 +43,14 @@ export const DEFAULT_PARAMS: Params = {
   pullCooldownEnabled: 1, pullCooldownMs: 300,
   turnStartDeg: 15, turnPauseMs: 250,
   backwardEnabled: 1,
+  turnStopDeg: 5, turnDeadMs: 200, minTurnMs: 0,
 };
 /** params の許容範囲 (PUT /params と config WS で clamp) */
 export const PARAM_RANGES: Partial<Record<keyof Params, [number, number]>> = {
   snapEnabled: [0, 1], snapPower: [0.05, 1], snapHoldMs: [0, 10000], snapLeadMargin: [0, 1], snapRecoverMs: [0, 60000],
   turnLockEnabled: [0, 1], turnLockMs: [0, 10000], pullCooldownEnabled: [0, 1], pullCooldownMs: [0, 10000],
   turnStartDeg: [5, 90], turnPauseMs: [0, 2000], backwardEnabled: [0, 1],
+  turnStopDeg: [1, 90], turnDeadMs: [0, 2000], minTurnMs: [0, 5000],
 };
 
 /** 席ごとのルール状態 (残り時間は snapshot 生成時点からの ms) */

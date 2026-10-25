@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS, DeviceWsOut, CalibState, TurnDir } from "./shared";
 import type { DeviceWsMsg } from "./shared";
 import { PULL_STALE_MS, clamp, deviceCmd, moveCommand, step, fuseHeading, imuHeading, imuOffsetFor, wrap360, turnRateFrom, parseSpeed } from "./logic";
-import { xyMsg, driveFrame } from "./logic";
+import { xyMsg, driveFrame, TURN_ERR_NORM_DEG, turnStartDeg } from "./logic";
 import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg, PARAM_RANGES, MechView } from "./shared";
 import { SeatMech, MechEvent, freshMech, applyPull, restoreIfDue, turnLockDuration, turnLockStarts, mergeParams } from "./mechanics";
 
@@ -53,6 +53,8 @@ export class RoomDO extends DurableObject<Env> {
   lastDevice: DeviceCmd | null = null;
   devicePayload: MovePayload | null = null;
   manualUntil = 0;
+  turnStartedAt = 0; // 今の旋回コマンドを出し始めた時刻
+  lastTickAt = 0;
   turnPauseTimer: ReturnType<typeof setTimeout> | null = null; // 直進→旋回の「ちょっと止まる」中
   manualTimer: ReturnType<typeof setInterval> | null = null;
   // Plan B (磁石XY)
@@ -277,7 +279,13 @@ export class RoomDO extends DurableObject<Env> {
       else powers[s] = p && now - p.at < PULL_STALE_MS ? p.power : 0;
       if ((this.mech[s]?.snappedUntil ?? 0) > now) powers[s] = 0;
     }
+    const isTurningNow = this.devicePayload === "turn_right" || this.devicePayload === "turn_left";
+    // 旋回の起動遅れ (turnDeadMs) の間は「まだ回ってない」とみなす → 推定が実機より先に進んで旋回が 1 回で打ち切られるのを防ぐ
+    const turnFrom = Math.max(this.lastTickAt, now - 2 * TICK_MS, this.turnStartedAt + (this.s.params.turnDeadMs ?? 0));
+    const turnDt = isTurningNow ? Math.max(0, now - turnFrom) / 1000 : 0;
+    this.lastTickAt = now;
     const out = step({
+      turnDt,
       powers, tensions: this.tensions, plate: this.s.plate, params: this.s.params, dt: TICK_MS / 1000,
       headingOverrideDeg: this.fusedHeading(),
       // 実際に旋回コマンドを出していた時だけ向き推定を回す (出してないのに「回った」ことにして直進し続けるバグ対策)
@@ -500,6 +508,7 @@ export class RoomDO extends DurableObject<Env> {
   sendDevice(out: MovePayload | DeviceWsOut, only?: WebSocket) {
     const o: DeviceWsOut = typeof out === "string" ? { payload: out } : out;
     if ("payload" in o) {
+      if ((o.payload === "turn_right" || o.payload === "turn_left") && o.payload !== this.devicePayload) this.turnStartedAt = Date.now();
       this.devicePayload = o.payload;
       this.deviceSpeed = o.speed ?? null;
     }
@@ -518,7 +527,19 @@ export class RoomDO extends DurableObject<Env> {
       type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
       plate: this.livePlate(), leaderSeat: this.leaderSeat, params: this.s.params, targetDirDeg: this.targetDirDeg,
     });
-    const out = moveCommand(cmd, this.s.params);
+    let out = moveCommand(cmd, this.s.params);
+    // 旋回の継続: 一度回り始めたら ずれ < turnStopDeg まで (ヒステリシス) / 最低 minTurnMs は同じ向きに回り続ける
+    const cur = this.devicePayload;
+    if ((cur === "turn_right" || cur === "turn_left") && cmd.active && !cmd.estop && this.s.mode === "A" && out.payload !== cur) {
+      const p = this.s.params;
+      const errDeg = (cmd.turn ?? 0) * TURN_ERR_NORM_DEG * (cur === "turn_right" ? 1 : -1); // 今回ってる向きに残っているずれ
+      const stopDeg = Math.min(p.turnStopDeg ?? 5, turnStartDeg(p));
+      const holding = Date.now() - this.turnStartedAt < (p.minTurnMs ?? 0);
+      const oppositeTurn = out.payload === (cur === "turn_right" ? "turn_left" : "turn_right");
+      if ((errDeg >= stopDeg || holding) && !(oppositeTurn && !holding)) {
+        out = (p.speedOut ?? 0) >= 0.5 ? { payload: cur, speed: 1 } : { payload: cur };
+      }
+    }
     if (this.turnPauseTimer) return; // 停止中: 終わったら旋回を送る
     const pauseMs = Math.round(this.s.params.turnPauseMs ?? 0);
     const isTurn = out.payload === "turn_right" || out.payload === "turn_left";
