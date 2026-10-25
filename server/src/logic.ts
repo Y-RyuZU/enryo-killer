@@ -44,6 +44,10 @@ export type StepInput = {
   params: Params;
   dt: number; // sec
   headingOverrideDeg?: number | null; // IMU 由来の実測方位 (新鮮なときだけ)。null = dead reckoning
+  /** 直前の dt の間に実機へ出していた旋回 ("right"/"left"/null=旋回してない)。
+   *  指定すると、実際に旋回コマンドを出していた間だけ向き推定を回す。
+   *  undefined = 旧挙動 (毎 tick 目標へ向かって回ったとみなす。シミュ/テスト用) */
+  turning?: "right" | "left" | null;
 };
 export type StepOutput = {
   tensions: Partial<Record<Seat, number>>;
@@ -55,7 +59,7 @@ export type StepOutput = {
 };
 
 /** 純関数: 1 tick 分の物理/判定 */
-export function step({ powers, tensions, plate, params, dt, headingOverrideDeg = null }: StepInput): StepOutput {
+export function step({ powers, tensions, plate, params, dt, headingOverrideDeg = null, turning }: StepInput): StepOutput {
   const p = { ...DEFAULT_PARAMS, ...params };
   const k = Math.pow(p.decay, dt / 0.5); // decay は 0.5s あたりの値
   const nt: Partial<Record<Seat, number>> = {};
@@ -97,7 +101,14 @@ export function step({ powers, tensions, plate, params, dt, headingOverrideDeg =
     // 向き推定: 最大 turnRateDegPerSec (既定 90°/s, キャリブで実測値) で目標方向へ回す。IMU 実測があればそこが起点
     const rate = p.turnRateDegPerSec > 0 ? p.turnRateDegPerSec : 90;
     const { dh } = driveFrame(targetDirDeg, h0, p); // バック走行時はお尻を目標へ向ける
-    np.headingDeg = (h0 + clamp(dh, -rate * dt, rate * dt) + 360) % 360;
+    let rot: number;
+    if (turning === undefined) rot = clamp(dh, -rate * dt, rate * dt); // 旧挙動
+    else if (headingOverrideDeg != null || !turning) rot = 0; // IMU 実測あり / 旋回してない → 推定で回さない
+    else {
+      const sign = turning === "right" ? 1 : -1;
+      rot = Math.sign(dh) === sign ? sign * Math.min(rate * dt, Math.abs(dh)) : sign * rate * dt;
+    }
+    np.headingDeg = (h0 + rot + 360) % 360;
   } else {
     np.speed = 0;
   }

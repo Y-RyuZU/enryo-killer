@@ -25,7 +25,7 @@ export interface Env {
   ROOM: DurableObjectNamespace<RoomDO>;
 }
 
-const TICK_MS = 500;
+const TICK_MS = 250; // 引っ張り/決着の反映を速く (decay は 0.5s 基準で正規化済みなので挙動は同じ)
 const DEVICE_ONLINE_MS = 2000;
 const freshPlate = (): Plate => ({ x: 0, y: 0, headingDeg: 0, speed: 0 });
 
@@ -280,6 +280,8 @@ export class RoomDO extends DurableObject<Env> {
     const out = step({
       powers, tensions: this.tensions, plate: this.s.plate, params: this.s.params, dt: TICK_MS / 1000,
       headingOverrideDeg: this.fusedHeading(),
+      // 実際に旋回コマンドを出していた時だけ向き推定を回す (出してないのに「回った」ことにして直進し続けるバグ対策)
+      turning: this.s.mode !== "A" ? undefined : this.devicePayload === "turn_right" ? "right" : this.devicePayload === "turn_left" ? "left" : null,
     });
     this.headingSource = out.headingSource;
     this.tick++;
