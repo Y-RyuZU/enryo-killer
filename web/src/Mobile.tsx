@@ -144,17 +144,16 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
         ) : (
           <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
         )}
-        {/* 紐の先端: 持ち手ではなく、くるっと捻れた輪っか */}
+        {/* 紐の先端: 輪っかは無し、茶色の結び目だけ */}
         <g transform={`translate(${100 + shake / 2} ${handleY})`} style={{ cursor: "grab" }} opacity={snapped ? 0.55 : 1}>
-          <path d="M0 0 C 30 16, 34 64, 0 66 C -34 64, -30 16, 0 0" stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
           <g transform="translate(0 4)">
             <rect x="-9" y="-9" width="18" height="18" rx="5" fill="#8a5f2c" transform="rotate(45)" />
             <path d="M-7 -5 L 7 3 M-7 1 L 7 9" stroke="#5c3d1b" strokeWidth="2.5" strokeLinecap="round" />
           </g>
-          <circle cy="30" r="44" fill="transparent" />
+          <circle cy="4" r="44" fill="transparent" />
         </g>
         {drag === 0 && snap.phase === "playing" && !snapped && !turning && (
-          <text x="100" y={handleY + 100} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
+          <text x="100" y={handleY + 70} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
         )}
       </svg>
 
