@@ -134,15 +134,15 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
             <rect width="10" height="5" fill="#8a5f2c" />
           </pattern>
         </defs>
-        <rect x="70" y="0" width="60" height="18" rx="4" fill="#3b2a1e" />
+        {/* 上端の留め具は無し: 画面の外 (上) から紐が垂れてくる見せ方 */}
         {snapped ? (
           <>
-            <path d="M100 18 L 96 150 L 104 165" stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
+            <path d="M100 -40 L 96 150 L 104 165" stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
             <path d={`M104 210 L 98 222 L ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" opacity="0.55" />
             <text x="100" y="196" textAnchor="middle" fontSize="34">✂</text>
           </>
         ) : (
-          <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
+          <path d={`M100 -40 Q ${100 + shake} ${(-40 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
         )}
         {/* 紐の先端: 輪っかは無し、茶色の結び目だけ */}
         <g transform={`translate(${100 + shake / 2} ${handleY})`} style={{ cursor: "grab" }} opacity={snapped ? 0.55 : 1}>

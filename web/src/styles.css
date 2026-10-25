@@ -37,7 +37,7 @@ button:disabled { cursor: default; }
 .hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 18px; }
 .toast { position: fixed; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--red); padding: 10px 16px; border-radius: 10px; font-weight: 700; }
 
-.rope-screen { height: 100vh; height: 100dvh; overflow: hidden; padding-top: calc(18px + env(safe-area-inset-top)); background: #000; touch-action: none; user-select: none; -webkit-user-select: none; transition: background 0.4s; }
+.rope-screen { height: 100vh; height: 100dvh; overflow: hidden; padding-top: 0; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; transition: background 0.4s; }
 
 
 .rope-top { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -270,3 +270,6 @@ details.hd-card[open] > summary { margin-bottom: 8px; }
 /* 引っ張り画面は背景 #000 (iPhone の上下も黒で塗る) */
 html:has(.rope-screen), html:has(.rope-screen) body,
 html:has(.landing), html:has(.landing) body { background: #000; }
+
+/* 紐は画面上端の外から垂れる: バナーは紐に重ねて表示 */
+.rope-screen .mech-banner { position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 5; margin-top: 0; white-space: nowrap; }
