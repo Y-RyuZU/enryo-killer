@@ -12,7 +12,6 @@ export function Landing() {
         <h1>遠慮の塊<br />解消マシン</h1>
       </header>
       <div className="landing-plate"><Karaage size={110} /></div>
-      <div className="landing-label">プレイヤーとして参加</div>
       <div className="landing-seats">
         {LETTERS.map((l) => (
           <a key={l} className="landing-seat" href={`/${l.toLowerCase()}${q}`}>
@@ -20,10 +19,7 @@ export function Landing() {
           </a>
         ))}
       </div>
-      <a className="btn big landing-host" href={`/host${q}`}>ホスト / 管理画面</a>
-      <div className="landing-foot">
-        ROOM {code} · <a href={`/sim${q}`}>旧シミュレーター</a> · <a href="/join">コード入力で参加 (旧)</a> · <a href="/api/docs">API</a>
-      </div>
+      <a className="landing-host" href={`/host${q}`}>ホスト / 管理画面</a>
     </div>
   );
 }
