@@ -121,6 +121,8 @@ button:disabled { cursor: default; }
 .muted { color: var(--muted); }
 .landing { align-items: stretch; text-align: center; }
 .landing-plate { display: grid; place-items: center; margin-bottom: 16px; }
+.landing-logo { margin: 0; }
+.landing-logo img { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; }
 .landing-label { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .landing-seats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
 .landing-seat { display: flex; flex-direction: column; align-items: center; padding: 18px 0; border-radius: 16px; border: 2px solid #a0703f; background: linear-gradient(#4d3524, #3a2a1d); color: var(--text); text-decoration: none; box-shadow: 0 4px 0 #120c08; }
