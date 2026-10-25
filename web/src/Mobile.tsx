@@ -75,9 +75,15 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
   const powerRef = useRef(0);
   powerRef.current = power;
 
-  // 引っ張り値を ~8Hz で送信 (離したら 0)
+  // 引っ張り値を ~8Hz で送信。引いていない間 (power=0) は離した瞬間の 0 を 1 回送るだけで止める
+  // (放置中のスマホが DO のリクエスト枠を食い続けないように)。タブが裏に回ったら 0 扱い
   useEffect(() => {
-    const id = setInterval(() => send({ t: "pull", power: powerRef.current }), 125);
+    let last = 0;
+    const id = setInterval(() => {
+      const p = document.hidden ? 0 : powerRef.current;
+      if (p > 0 || last > 0) send({ t: "pull", power: p });
+      last = p;
+    }, 125);
     return () => clearInterval(id);
   }, [send]);
 

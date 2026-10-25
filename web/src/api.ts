@@ -136,8 +136,11 @@ export function useBot(code: string, seat: Seat, enabled: boolean, power: number
       ws = new WebSocket(`${wsBase()}/api/rooms/${encodeURIComponent(code)}/ws?${q}`);
       ws.onopen = () => {
         ws!.send(JSON.stringify({ t: "join", playerId, name: `BOT-${SEAT_LETTER[seat]}`, seat } satisfies C2S));
+        let last = -1; // 接続直後に 1 回は送る
         iv = window.setInterval(() => {
-          if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "pull", power: powerRef.current } satisfies C2S));
+          const p = powerRef.current;
+          // power=0 が続く間は送らない (放置中のリクエスト削減)
+          if (ws?.readyState === WebSocket.OPEN && (p > 0 || last !== 0)) { ws.send(JSON.stringify({ t: "pull", power: p } satisfies C2S)); last = p; }
         }, 125);
       };
       ws.onclose = () => { clearInterval(iv); if (alive) retry = window.setTimeout(open, 1000); };

@@ -27,6 +27,8 @@ export interface Env {
 
 const TICK_MS = 250; // 引っ張り/決着の反映を速く (decay は 0.5s 基準で正規化済みなので挙動は同じ)
 const DEVICE_ONLINE_MS = 2000;
+/** プレイ中でも誰も引かず皿も止まったままこの時間が過ぎたら alarm ループを止めて DO を休ませる (次の pull で自動再開) */
+const IDLE_SLEEP_MS = 15000;
 const freshPlate = (): Plate => ({ x: 0, y: 0, headingDeg: 0, speed: 0 });
 
 export class RoomDO extends DurableObject<Env> {
@@ -55,6 +57,8 @@ export class RoomDO extends DurableObject<Env> {
   manualUntil = 0;
   turnStartedAt = 0; // 今の旋回コマンドを出し始めた時刻
   lastTickAt = 0;
+  alarmArmed = false; // tick ループ (alarm) が回っているか。hibernation 後は false に戻る
+  lastActiveAt = 0; // 最後に誰かが引いた / 開始した時刻
   turnPauseTimer: ReturnType<typeof setTimeout> | null = null; // 直進→旋回の「ちょっと止まる」中
   manualTimer: ReturnType<typeof setInterval> | null = null;
   // Plan B (磁石XY)
@@ -229,6 +233,8 @@ export class RoomDO extends DurableObject<Env> {
         if (this.s.phase === "finished") this.resetGame();
         this.resetMech();
         this.s.phase = "playing";
+        this.lastActiveAt = Date.now();
+        this.alarmArmed = true;
         await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
       }
     } else if (cmd === "stop") {
@@ -266,7 +272,7 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   async alarm() {
-    if (this.s.phase !== "playing" || this.s.estop) return;
+    if (this.s.phase !== "playing" || this.s.estop) { this.alarmArmed = false; return; }
     const now = Date.now();
     this.mechTick(now);
     const locked = !!this.turnLock;
@@ -308,16 +314,39 @@ export class RoomDO extends DurableObject<Env> {
       this.s.plate.speed = 0;
       this.autoDevice();
       await this.save();
+    } else if (this.isIdle(now)) {
+      // 誰も引いてない & 張力ほぼ 0 & 旋回/手動/キャリブなし → ループを止めて休眠 (次の pull で onPull が再開)
+      this.alarmArmed = false;
     } else {
+      this.alarmArmed = true;
       await this.ctx.storage.setAlarm(now + TICK_MS);
     }
     this.broadcast();
+  }
+
+  isIdle(now: number) {
+    if (now - this.lastActiveAt < IDLE_SLEEP_MS) return false;
+    if (this.turnLock || this.turnPauseTimer || this.manualTimer || this.calib?.state === "spinning") return false;
+    for (const s of SEATS) {
+      const p = this.powers[s];
+      if (p && p.power > 0 && now - p.at < PULL_STALE_MS) return false;
+      if ((this.tensions[s] ?? 0) > 0.01) return false;
+    }
+    return this.devicePayload === null || this.devicePayload === "stop";
   }
 
   // ---------- ゲームルール (ひも切れ / 旋回ロック / 引っ張りクールタイム) ----------
   onPull(seat: Seat, power: number) {
     const now = Date.now();
     if (this.s.phase !== "playing" || this.s.estop) { this.powers[seat] = { power, at: now }; return; }
+    if (power > 0) {
+      this.lastActiveAt = now;
+      if (!this.alarmArmed) { // 休眠中のプレイ部屋を起こす
+        this.alarmArmed = true;
+        this.lastTickAt = now;
+        this.ctx.storage.setAlarm(now + TICK_MS).catch(() => { this.alarmArmed = false; });
+      }
+    }
     if (this.turnLock) {
       if (now < this.turnLock.until) return; // 旋回中は誰も引けない (無視)
       this.mechTick(now);
