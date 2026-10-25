@@ -21,6 +21,10 @@
 #define MIN_DUTY 80
 #define TURN_MIN_DUTY 90
 #define ALLOW_SPEED_FIELD 1  // 0 で speed を無視 (常に SPEED/TURN_SPEED)
+// 旋回方式: 1 = 片輪旋回 (外側の車輪だけ TURN_SPEED で前進、内側の車輪はブレーキで完全停止)
+//          0 = 超信地旋回 (左右逆回転、旧方式)
+#define PIVOT_TURN 1
+#define PIVOT_BRAKE 1  // 1 = 止める側の車輪をショートブレーキ (IN1=IN2=HIGH) で固定。0 = 惰性で空転
 
 // 最後のコマンドからこの ms 何も来なければ停止 (通信断フェイルセーフ)
 #define FAILSAFE_MS 1000

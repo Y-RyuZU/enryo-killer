@@ -45,6 +45,7 @@ arduino-cli upload  -b esp32:esp32:esp32 -p <COMポート> firmware/esp32_device
 - サーバー → ESP: `{"payload":"forward|backward|turn_right|turn_left|stop"}`（任意で `"speed":0..1`）。ESP からの送信は IMU ビルドのみ（`hello` / `imu` / `calib`）
 - 通信が `FAILSAFE_MS`(1秒) 途切れたら自動 stop、切断時は2秒ごとに自動再接続
 - 速度は `SPEED` / `TURN_SPEED`（0-255）、向きが逆なら該当モーターの `IN1`/`IN2` を入れ替え
+- 旋回は既定で片輪旋回（`PIVOT_TURN 1`）: 外側の車輪だけ `TURN_SPEED` で前進、内側はショートブレーキで完全停止（`PIVOT_BRAKE 0` で惰性）。`PIVOT_TURN 0` で旧来の超信地旋回（左右逆回転）
 - `{"payload":"forward","speed":0.6}` のように `speed`（0..1）が付くと `SPEED`/`TURN_SPEED` × speed で回す（下限 `MIN_DUTY`/`TURN_MIN_DUTY`）。付かなければ従来どおり
 - 古い `config.h` のままでもビルドできる（新しい項目は既定値）。IMU を使うときだけ `config.example.h` の IMU 節をコピー
 

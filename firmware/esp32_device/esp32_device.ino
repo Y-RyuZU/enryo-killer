@@ -47,7 +47,7 @@
 #ifndef IMU_IDLE_REPORT_MS
 #define IMU_IDLE_REPORT_MS 1000
 #endif
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.2.0"
 
 WebSocketsClient ws;
 unsigned long lastCmdAt = 0;
@@ -78,6 +78,21 @@ static void motor(int in1, int in2, int en, int dir, int speed) {
   pwmWrite(en, dir == 0 ? 0 : speed);
 }
 
+#ifndef PIVOT_TURN
+#define PIVOT_TURN 1
+#endif
+#ifndef PIVOT_BRAKE
+#define PIVOT_BRAKE 1
+#endif
+// 車輪を完全に止める。PIVOT_BRAKE=1 ならショートブレーキ (IN1=IN2=HIGH, PWM 全開) で転がらないよう固定
+static void hold(int in1, int in2, int en) {
+#if PIVOT_BRAKE
+  digitalWrite(in1, HIGH); digitalWrite(in2, HIGH); pwmWrite(en, 255);
+#else
+  motor(in1, in2, en, 0, 0);
+#endif
+}
+
 // sp: 0..1 (SPEED/TURN_SPEED への倍率)。1.0 = 従来と完全に同じ duty
 static void drive(const String& p, float sp = 1.0f) {
   int fwdDuty = SPEED, turnDuty = TURN_SPEED;
@@ -87,8 +102,14 @@ static void drive(const String& p, float sp = 1.0f) {
   }
   if (p == "forward")         { motor(L_IN1, L_IN2, L_EN,  1, fwdDuty);  motor(R_IN1, R_IN2, R_EN,  1, fwdDuty); }
   else if (p == "backward")   { motor(L_IN1, L_IN2, L_EN, -1, fwdDuty);  motor(R_IN1, R_IN2, R_EN, -1, fwdDuty); }
+#if PIVOT_TURN
+  // 片輪旋回: 外側だけ前進、内側は絶対に動かさない
+  else if (p == "turn_right") { motor(L_IN1, L_IN2, L_EN,  1, turnDuty); hold(R_IN1, R_IN2, R_EN); }
+  else if (p == "turn_left")  { hold(L_IN1, L_IN2, L_EN); motor(R_IN1, R_IN2, R_EN,  1, turnDuty); }
+#else
   else if (p == "turn_right") { motor(L_IN1, L_IN2, L_EN,  1, turnDuty); motor(R_IN1, R_IN2, R_EN, -1, turnDuty); }
   else if (p == "turn_left")  { motor(L_IN1, L_IN2, L_EN, -1, turnDuty); motor(R_IN1, R_IN2, R_EN,  1, turnDuty); }
+#endif
   else                        { motor(L_IN1, L_IN2, L_EN,  0, 0);        motor(R_IN1, R_IN2, R_EN,  0, 0); }
   if (p != current || fabsf(sp - currentSpeed) > 0.02f) {
     if (sp < 0.999f) Serial.printf("[cmd] %s @%.2f\n", p.c_str(), sp);
