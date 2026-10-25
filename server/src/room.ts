@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { C2S, DEFAULT_PARAMS, Mode, Params, Phase, Plate, S2C, SEATS, Seat, Snapshot, Status, DeviceCmd, MovePayload, MOVE_PAYLOADS, DeviceWsOut, CalibState, TurnDir } from "./shared";
 import type { DeviceWsMsg } from "./shared";
 import { PULL_STALE_MS, clamp, deviceCmd, moveCommand, step, fuseHeading, imuHeading, imuOffsetFor, wrap360, turnRateFrom, parseSpeed } from "./logic";
-import { xyMsg } from "./logic";
+import { xyMsg, driveFrame } from "./logic";
 import { DEVICE_MODES, DEVICE_MODE_TO_MODE, MODE_TO_DEVICE_MODE, DeviceMode, XyMsg, PARAM_RANGES, MechView } from "./shared";
 import { SeatMech, MechEvent, freshMech, applyPull, restoreIfDue, turnLockDuration, turnLockStarts, mergeParams } from "./mechanics";
 
@@ -345,7 +345,7 @@ export class RoomDO extends DurableObject<Env> {
     if (Date.now() < this.manualUntil || this.calib?.state === "spinning") return;
     const dir = turnLockStarts(prevPayload, this.devicePayload ?? "stop");
     if (!dir) return;
-    const dh = this.targetDirDeg == null ? 90 : ((((this.targetDirDeg - this.livePlate().headingDeg + 180) % 360) + 360) % 360) - 180;
+    const dh = this.targetDirDeg == null ? 90 : driveFrame(this.targetDirDeg, this.livePlate().headingDeg, p).dh; // バック走行なら必要な旋回角も小さい
     const durationMs = turnLockDuration(p, dh);
     this.turnLock = { until: now + durationMs, durationMs, dir };
     this.pushMech({ kind: "turnlock_start", durationMs, dir });

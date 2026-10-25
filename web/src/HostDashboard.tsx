@@ -401,18 +401,22 @@ const RULES: { en: keyof Params; title: string; desc: string; sliders: RuleSlide
     en: "pullCooldownEnabled", title: "⏱ 引っ張りクールタイム", desc: "1回引いて離したら、少しの間 次の引っ張りが効かない",
     sliders: [{ k: "pullCooldownMs", label: "クールタイム", min: 0, max: 3000, step: 50, fmt: ms }],
   },
+  {
+    en: "backwardEnabled", title: "⬇ バック走行", desc: "モードAで行きたい方向が後ろ寄り (90°超) なら、回らずにお尻を向けて後退で進む",
+    sliders: [],
+  },
 ];
 
 function RulesCard({ snap, send, add }: { snap: Snapshot; send: (m: any) => void; add: (k: LogItem["kind"], t: string) => void }) {
   const set = (k: keyof Params, v: number) => send({ t: "config", params: { [k]: v } });
   const resetRules = () => {
-    const keys: (keyof Params)[] = ["snapEnabled", "snapPower", "snapHoldMs", "snapLeadMargin", "snapRecoverMs", "turnLockEnabled", "turnLockMs", "pullCooldownEnabled", "pullCooldownMs"];
+    const keys: (keyof Params)[] = ["snapEnabled", "snapPower", "snapHoldMs", "snapLeadMargin", "snapRecoverMs", "turnLockEnabled", "turnLockMs", "pullCooldownEnabled", "pullCooldownMs", "backwardEnabled"];
     send({ t: "config", params: Object.fromEntries(keys.map((k) => [k, DEFAULT_PARAMS[k]])) });
     add("host", "ゲームルールを既定値に戻した");
   };
   return (
     <details className="hd-card hd-rules" open>
-      <summary className="label">ゲームルール (ひも切れ / 旋回ロック / クールタイム)</summary>
+      <summary className="label">ゲームルール (ひも切れ / 旋回ロック / クールタイム / バック走行)</summary>
       {RULES.map((r) => {
         const on = (snap.params[r.en] ?? 0) >= 0.5;
         return (

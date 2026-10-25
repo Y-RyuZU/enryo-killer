@@ -179,6 +179,7 @@ const paramProps = {
   turnLockMs: { type: "number", minimum: 0, maximum: 10000, default: 0, description: "旋回ロックの長さ。0=自動 (旋回角 ÷ turnRateDegPerSec)" },
   pullCooldownEnabled: { type: "number", enum: [0, 1], default: 1, description: "引っ張りクールタイム ON/OFF" },
   pullCooldownMs: { type: "number", minimum: 0, maximum: 10000, default: 300, description: "離してから次の引っ張りが効くまで" },
+  backwardEnabled: { type: "number", enum: [0, 1], default: 1, description: "バック走行 ON/OFF。mode A で行きたい方向が後ろ寄り (ずれ 90°超) なら 180°回らずに backward で進む" },
 };
 const paramsRes = { description: "現在の params / 既定値 / 許容範囲", content: { "application/json": { example: { ok: true, params: { snapEnabled: 1, snapPower: 0.9, snapHoldMs: 800, snapLeadMargin: 0, snapRecoverMs: 3000, turnLockEnabled: 1, turnLockMs: 0, pullCooldownEnabled: 1, pullCooldownMs: 300 }, defaults: {}, ranges: {} } } } };
 Object.assign(openapi.paths, {

@@ -30,6 +30,7 @@ export type Params = {
   // --- Plan A 旋回のキビキビ度 ---
   turnStartDeg: number; // 目標方向とのずれがこれ以上なら旋回 (未満なら直進)。小さいほどすぐ曲がる (旧 30)
   turnPauseMs: number; // 直進→旋回に切り替わるとき、いったん止まる時間 (0 = 止まらない)
+  backwardEnabled: number; // 0/1 行きたい方向が後ろ寄り (ずれ 90°超) なら、180°回らずにお尻を向けて backward で進む
 };
 export const DEFAULT_PARAMS: Params = {
   maxSpeed: 0.08, gain: 2, decay: 0.8, tieMargin: 0.05, winRadius: 0.35,
@@ -38,12 +39,13 @@ export const DEFAULT_PARAMS: Params = {
   turnLockEnabled: 1, turnLockMs: 0,
   pullCooldownEnabled: 1, pullCooldownMs: 300,
   turnStartDeg: 15, turnPauseMs: 250,
+  backwardEnabled: 1,
 };
 /** params の許容範囲 (PUT /params と config WS で clamp) */
 export const PARAM_RANGES: Partial<Record<keyof Params, [number, number]>> = {
   snapEnabled: [0, 1], snapPower: [0.05, 1], snapHoldMs: [0, 10000], snapLeadMargin: [0, 1], snapRecoverMs: [0, 60000],
   turnLockEnabled: [0, 1], turnLockMs: [0, 10000], pullCooldownEnabled: [0, 1], pullCooldownMs: [0, 10000],
-  turnStartDeg: [5, 90], turnPauseMs: [0, 2000],
+  turnStartDeg: [5, 90], turnPauseMs: [0, 2000], backwardEnabled: [0, 1],
 };
 
 /** 席ごとのルール状態 (残り時間は snapshot 生成時点からの ms) */
@@ -118,6 +120,7 @@ export type DeviceCmd = {
   speed?: number; // 0..1
   turn?: number; // -1..1 (正=右旋回) 推定headingとの差から計算
   fwd?: number; // 0..1
+  back?: boolean; // true = お尻側を進行方向にして backward で進む (backwardEnabled 時)
   // --- mode B (磁石XY) ---
   x_mm?: number; // 今いてほしい座標 (卓中心原点, +x=E, +y=S)
   y_mm?: number;

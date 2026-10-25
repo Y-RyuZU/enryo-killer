@@ -13,6 +13,14 @@ export const PULL_STALE_MS = 1500;
 
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 export const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
+/** 目標方位と現在の向きから「どっちを前にして進むか」を決める。
+ *  backwardEnabled で ずれが 90° を超えるなら、お尻を前にして backward (旋回は最大 90° で済む)。
+ *  dh = 「前にする側」から目標までのずれ (正 = 右旋回) */
+export function driveFrame(dirDeg: number, headingDeg: number, p?: Partial<Params>): { dh: number; back: boolean } {
+  const dh = wrap180(dirDeg - headingDeg);
+  if (Number(p?.backwardEnabled ?? 0) >= 0.5 && Math.abs(dh) > 90) return { dh: wrap180(dh - 180), back: true };
+  return { dh, back: false };
+}
 export const wrap360 = (d: number) => ((d % 360) + 360) % 360;
 /** 方位誤差の正規化 (turn = dh / これ)。turnRateDegPerSec とは別物なので固定 */
 export const TURN_ERR_NORM_DEG = 90;
@@ -88,7 +96,7 @@ export function step({ powers, tensions, plate, params, dt, headingOverrideDeg =
     targetDirDeg = ((Math.atan2(fx, -fy) * 180) / Math.PI + 360) % 360; // 0=N 時計回り
     // 向き推定: 最大 turnRateDegPerSec (既定 90°/s, キャリブで実測値) で目標方向へ回す。IMU 実測があればそこが起点
     const rate = p.turnRateDegPerSec > 0 ? p.turnRateDegPerSec : 90;
-    const dh = wrap180(targetDirDeg - h0);
+    const { dh } = driveFrame(targetDirDeg, h0, p); // バック走行時はお尻を目標へ向ける
     np.headingDeg = (h0 + clamp(dh, -rate * dt, rate * dt) + 360) % 360;
   } else {
     np.speed = 0;
@@ -120,11 +128,11 @@ export function deviceCmd(opts: {
     if (!active || !leaderSeat) return { ...base, dirDeg: plate.headingDeg, speed: 0, turn: 0, fwd: 0 };
     const tgt = SEAT_POS[leaderSeat];
     const dirDeg = targetDirDeg ?? ((Math.atan2(tgt.x - plate.x, -(tgt.y - plate.y)) * 180) / Math.PI + 360) % 360;
-    const dh = wrap180(dirDeg - plate.headingDeg);
+    const { dh, back } = driveFrame(dirDeg, plate.headingDeg, params);
     const turn = clamp(dh / TURN_ERR_NORM_DEG, -1, 1);
     const fwd = Math.abs(dh) < turnStartDeg(params) ? plate.speed : 0;
     const r = (n: number) => Math.round(n * 1000) / 1000;
-    return { ...base, dirDeg: r(dirDeg), speed: r(plate.speed), turn: r(turn), fwd: r(fwd) };
+    return { ...base, dirDeg: r(dirDeg), speed: r(plate.speed), turn: r(turn), fwd: r(fwd), ...(back ? { back: true } : {}) };
   }
   const R = TABLE_RADIUS_MM;
   const goal = leaderSeat ? SEAT_POS[leaderSeat] : { x: plate.x, y: plate.y };
@@ -147,7 +155,8 @@ export function movePayload(cmd: DeviceCmd, params?: Partial<Params>): MovePaylo
   const th = turnStartDeg(params) / TURN_ERR_NORM_DEG - 1e-6;
   if (turn >= th) return "turn_right";
   if (turn <= -th) return "turn_left";
-  return (cmd.fwd ?? 0) > 0 ? "forward" : "stop";
+  if ((cmd.fwd ?? 0) <= 0) return "stop";
+  return cmd.back ? "backward" : "forward";
 }
 
 /** mode B (磁石XY): 皿の現在位置をそのまま目標座標として送る。単位円にクランプ */
