@@ -115,14 +115,7 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
 
   return (
     <div className={`m-screen rope-screen st-${status} ${snapped ? "is-snapped" : ""} ${turning ? "is-turning" : ""}`}>
-      <div className="rope-top">
-        <div>
-          <div className="seat-chip" onClick={onTitleClick}>{title ?? `${SEAT_LABEL[seat]}の席`}・{snap.seats[seat]?.name}</div>
-          <div className="room-chip">ROOM {snap.code} {!connected && "（再接続中）"}</div>
-        </div>
-        <MiniMap snap={snap} seat={seat} />
-      </div>
-      <div className={`status-pill ${status}`}>{statusText}</div>
+      {/* 上部のチップ・ミニマップ・状態ピルは非表示 (デザイン指示) */}
       {snapped ? (
         <div className="mech-banner snapped">✂ ひもが切れた！<b>復活まで {secs(snapLeft)}s</b></div>
       ) : turning ? (
@@ -144,20 +137,24 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
         <rect x="70" y="0" width="60" height="18" rx="4" fill="#3b2a1e" />
         {snapped ? (
           <>
-            <path d="M100 18 L 96 150 L 104 165" stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" />
-            <path d={`M104 210 L 98 222 L ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" opacity="0.55" />
+            <path d="M100 18 L 96 150 L 104 165" stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
+            <path d={`M104 210 L 98 222 L ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" opacity="0.55" />
             <text x="100" y="196" textAnchor="middle" fontSize="34">✂</text>
           </>
         ) : (
-          <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="22" fill="none" strokeLinecap="round" />
+          <path d={`M100 18 Q ${100 + shake} ${(18 + handleY) / 2} ${100 + shake / 2} ${handleY}`} stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
         )}
-        <g transform={`translate(${100 + shake / 2} ${handleY})`} style={{ cursor: "grab" }}>
-          <rect x="-46" y="-6" width="92" height="30" rx="15" fill="#5a3a22" stroke="#2a1a10" strokeWidth="3" />
-          <rect x="-40" y="0" width="80" height="6" rx="3" fill="#7a5232" />
-          <circle r="34" fill="transparent" />
+        {/* 紐の先端: 持ち手ではなく、くるっと捻れた輪っか */}
+        <g transform={`translate(${100 + shake / 2} ${handleY})`} style={{ cursor: "grab" }} opacity={snapped ? 0.55 : 1}>
+          <path d="M0 0 C 30 16, 34 64, 0 66 C -34 64, -30 16, 0 0" stroke="url(#twist)" strokeWidth="12" fill="none" strokeLinecap="round" />
+          <g transform="translate(0 4)">
+            <rect x="-9" y="-9" width="18" height="18" rx="5" fill="#8a5f2c" transform="rotate(45)" />
+            <path d="M-7 -5 L 7 3 M-7 1 L 7 9" stroke="#5c3d1b" strokeWidth="2.5" strokeLinecap="round" />
+          </g>
+          <circle cy="30" r="44" fill="transparent" />
         </g>
         {drag === 0 && snap.phase === "playing" && !snapped && !turning && (
-          <text x="100" y={handleY + 70} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
+          <text x="100" y={handleY + 100} textAnchor="middle" className="pull-hint">↓ こっそり引っ張る</text>
         )}
       </svg>
 
