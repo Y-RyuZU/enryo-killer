@@ -16,7 +16,7 @@
 #define R_EN  14   // PWM (ENB / PWMB)。-1 なら未使用
 #define STBY  -1   // TB6612 の STBY。不要なら -1
 #define SPEED 200  // 0-255 (speed 省略時 = これ)
-#define TURN_SPEED 160
+#define TURN_SPEED 255  // 旋回はフルパワー (旧 160。直進に負けて曲がりにくかったので)
 // サーバーから speed (0..1) が来たら SPEED/TURN_SPEED に掛ける。その時の下限 duty (これ未満だと回らない)
 #define MIN_DUTY 80
 #define TURN_MIN_DUTY 90

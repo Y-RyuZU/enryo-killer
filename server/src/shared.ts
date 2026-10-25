@@ -27,6 +27,9 @@ export type Params = {
   turnLockMs: number; // 旋回ロックの長さ。0 = 自動 (必要な旋回角 ÷ turnRateDegPerSec, 300..5000ms)
   pullCooldownEnabled: number; // 0/1 引っ張りクールタイム
   pullCooldownMs: number; // 1 回引いて離してから、次の引っ張りが効くまでの時間
+  // --- Plan A 旋回のキビキビ度 ---
+  turnStartDeg: number; // 目標方向とのずれがこれ以上なら旋回 (未満なら直進)。小さいほどすぐ曲がる (旧 30)
+  turnPauseMs: number; // 直進→旋回に切り替わるとき、いったん止まる時間 (0 = 止まらない)
 };
 export const DEFAULT_PARAMS: Params = {
   maxSpeed: 0.08, gain: 2, decay: 0.8, tieMargin: 0.05, winRadius: 0.35,
@@ -34,11 +37,13 @@ export const DEFAULT_PARAMS: Params = {
   snapEnabled: 1, snapPower: 0.9, snapHoldMs: 800, snapLeadMargin: 0, snapRecoverMs: 3000,
   turnLockEnabled: 1, turnLockMs: 0,
   pullCooldownEnabled: 1, pullCooldownMs: 300,
+  turnStartDeg: 15, turnPauseMs: 250,
 };
 /** params の許容範囲 (PUT /params と config WS で clamp) */
 export const PARAM_RANGES: Partial<Record<keyof Params, [number, number]>> = {
   snapEnabled: [0, 1], snapPower: [0.05, 1], snapHoldMs: [0, 10000], snapLeadMargin: [0, 1], snapRecoverMs: [0, 60000],
   turnLockEnabled: [0, 1], turnLockMs: [0, 10000], pullCooldownEnabled: [0, 1], pullCooldownMs: [0, 10000],
+  turnStartDeg: [5, 90], turnPauseMs: [0, 2000],
 };
 
 /** 席ごとのルール状態 (残り時間は snapshot 生成時点からの ms) */

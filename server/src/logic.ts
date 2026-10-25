@@ -122,7 +122,7 @@ export function deviceCmd(opts: {
     const dirDeg = targetDirDeg ?? ((Math.atan2(tgt.x - plate.x, -(tgt.y - plate.y)) * 180) / Math.PI + 360) % 360;
     const dh = wrap180(dirDeg - plate.headingDeg);
     const turn = clamp(dh / TURN_ERR_NORM_DEG, -1, 1);
-    const fwd = Math.abs(dh) < 30 ? plate.speed : 0;
+    const fwd = Math.abs(dh) < turnStartDeg(params) ? plate.speed : 0;
     const r = (n: number) => Math.round(n * 1000) / 1000;
     return { ...base, dirDeg: r(dirDeg), speed: r(plate.speed), turn: r(turn), fwd: r(fwd) };
   }
@@ -139,12 +139,14 @@ export function deviceCmd(opts: {
 }
 
 /** mode A のコマンドを ESP32 WS 用の単純コマンドに変換 (方位はサーバー側のオープンループ推定) */
-export const TURN_THRESHOLD = 0.33; // |turn| がこれ以上なら旋回 (≒30°ずれ)
-export function movePayload(cmd: DeviceCmd): MovePayload {
+export const TURN_THRESHOLD = 0.33; // 旧既定 (≒30°ずれ)。今は params.turnStartDeg / TURN_ERR_NORM_DEG
+export const turnStartDeg = (p?: Partial<Params>) => clamp(Number(p?.turnStartDeg) > 0 ? Number(p!.turnStartDeg) : 15, 5, 90);
+export function movePayload(cmd: DeviceCmd, params?: Partial<Params>): MovePayload {
   if (!cmd.active || cmd.estop) return "stop";
   const turn = cmd.turn ?? 0;
-  if (turn >= TURN_THRESHOLD) return "turn_right";
-  if (turn <= -TURN_THRESHOLD) return "turn_left";
+  const th = turnStartDeg(params) / TURN_ERR_NORM_DEG - 1e-6;
+  if (turn >= th) return "turn_right";
+  if (turn <= -th) return "turn_left";
   return (cmd.fwd ?? 0) > 0 ? "forward" : "stop";
 }
 
@@ -174,7 +176,7 @@ export function xyMsg(opts: { mode: Mode; estop: boolean; seq: number; x: number
 
 /** movePayload + 任意の speed。speedOut=0 なら {payload} だけ (従来と同一バイト列) */
 export function moveCommand(cmd: DeviceCmd, params: Params): DeviceWsMsg {
-  const payload = movePayload(cmd);
+  const payload = movePayload(cmd, params);
   if ((params.speedOut ?? 0) < 0.5 || payload === "stop") return { payload };
   // 前後進は皿の速度 (margin 由来) に追従、下限 minSpeedOut。旋回はフル (遅い旋回は止まりやすい)
   const base = payload === "forward" || payload === "backward" ? cmd.fwd ?? cmd.speed ?? 0 : 1;

@@ -53,6 +53,7 @@ export class RoomDO extends DurableObject<Env> {
   lastDevice: DeviceCmd | null = null;
   devicePayload: MovePayload | null = null;
   manualUntil = 0;
+  turnPauseTimer: ReturnType<typeof setTimeout> | null = null; // 直進→旋回の「ちょっと止まる」中
   manualTimer: ReturnType<typeof setInterval> | null = null;
   // Plan B (磁石XY)
   xySeq = 0;
@@ -515,7 +516,27 @@ export class RoomDO extends DurableObject<Env> {
       type: "A", mode: this.s.mode, phase: this.s.phase, estop: this.s.estop, seq: this.deviceSeq,
       plate: this.livePlate(), leaderSeat: this.leaderSeat, params: this.s.params, targetDirDeg: this.targetDirDeg,
     });
-    this.sendDevice(moveCommand(cmd, this.s.params));
+    const out = moveCommand(cmd, this.s.params);
+    if (this.turnPauseTimer) return; // 停止中: 終わったら旋回を送る
+    const pauseMs = Math.round(this.s.params.turnPauseMs ?? 0);
+    const isTurn = out.payload === "turn_right" || out.payload === "turn_left";
+    const wasDriving = this.devicePayload === "forward" || this.devicePayload === "backward";
+    if (isTurn && wasDriving && pauseMs > 0 && this.s.mode === "A" && this.s.phase === "playing" && !this.s.estop) {
+      // 直進の勢いを一度殺してから回る (曲がりやすくする)
+      this.sendDevice("stop");
+      this.turnPauseTimer = setTimeout(() => {
+        this.turnPauseTimer = null;
+        if (this.s.phase !== "playing" || this.s.estop || this.s.mode !== "A") return;
+        const prev = this.devicePayload;
+        this.autoDevice();
+        this.maybeStartTurnLock(prev, Date.now());
+        // 旋回をまるまる 1 tick 続けられるよう次の tick を後ろへずらす (方位推定と実際の旋回時間を合わせる)
+        this.ctx.storage.setAlarm(Date.now() + TICK_MS).catch(() => {});
+        this.broadcast();
+      }, pauseMs);
+      return;
+    }
+    this.sendDevice(out);
   }
 
   manual(out: MovePayload | DeviceWsMsg, durationMs: number) {
