@@ -114,9 +114,8 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
   return (
     <div className={`m-screen rope-screen st-${status} ${snapped ? "is-snapped" : ""} ${turning ? "is-turning" : ""}`}>
       {/* 上部のチップ・ミニマップ・状態ピルは非表示 (デザイン指示) / クールタイム表記・引きすぎ警告もスマホでは出さない */}
-      {snapped ? (
-        <div className="mech-banner snapped">✂ ひもが切れた！<b>復活まで {secs(snapLeft)}s</b></div>
-      ) : turning ? (
+      {/* ひも切れ表示は紐の下 (SVG 内) に出す (デザイン指示) */}
+      {turning ? (
         <div className="mech-banner turning">↻ 旋回中… <b>いまは引けない</b></div>
       ) : null}
 
@@ -146,6 +145,13 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
           </g>
           <circle cy="4" r="44" fill="transparent" />
         </g>
+        {/* ひも切れポップアップ: 紐に被らないよう結び目の下に。#BE0218 / 枠線なし / 「紐が切れた！」のみ (デザイン指示) */}
+        {snapped && (
+          <g className="snap-pop" transform={`translate(100 ${handleY + 46})`} pointerEvents="none">
+            <rect x="-62" y="-17" width="124" height="34" rx="8" fill="#BE0218" />
+            <text x="0" y="1" textAnchor="middle" dominantBaseline="middle" fontSize="16" fontWeight="800" fill="#fff">紐が切れた！</text>
+          </g>
+        )}
         {/* 「こっそり引っ張る」ヒントは非表示 (デザイン指示) */}
       </svg>
 
