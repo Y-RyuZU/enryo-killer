@@ -278,3 +278,10 @@ html:has(.landing), html:has(.landing) body { background: #f1e3c8 url("/home-bg.
 
 /* 紐は画面上端の外から垂れる: バナーは紐に重ねて表示 */
 .rope-screen .mech-banner { position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 5; margin-top: 0; white-space: nowrap; }
+
+/* 東西南北ボタンを十字配置 (amu デザイン) */
+.landing .landing-seats { grid-template-columns: repeat(3, 1fr); grid-template-areas: ". n ." "w . e" ". s ."; gap: 8px; max-width: 360px; width: 100%; margin: 8px auto 18px; }
+.landing .landing-seat { padding: 0; border: 0; background: none; box-shadow: none; border-radius: 10px; aspect-ratio: 1; }
+.landing .landing-seat img { display: block; width: 100%; height: 100%; border-radius: 10px; box-shadow: 0 4px 0 rgba(60,20,10,.45); }
+.landing .landing-seat:active img { transform: translateY(2px); box-shadow: 0 2px 0 rgba(60,20,10,.45); }
+.landing .seat-n { grid-area: n; } .landing .seat-e { grid-area: e; } .landing .seat-s { grid-area: s; } .landing .seat-w { grid-area: w; }

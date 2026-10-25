@@ -11,8 +11,8 @@ export function Landing() {
       </header>
       <div className="landing-seats">
         {LETTERS.map((l) => (
-          <a key={l} className="landing-seat" href={`/${l.toLowerCase()}${q}`}>
-            <b>{l}</b><small>{SEAT_LABEL[LETTER_SEAT[l]]}の席</small>
+          <a key={l} className={`landing-seat seat-${LETTER_SEAT[l].toLowerCase()}`} href={`/${l.toLowerCase()}${q}`}>
+            <img src={`/seat-${LETTER_SEAT[l].toLowerCase()}.png`} alt={`${SEAT_LABEL[LETTER_SEAT[l]]}の席`} />
           </a>
         ))}
       </div>
