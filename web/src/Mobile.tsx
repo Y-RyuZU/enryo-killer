@@ -155,8 +155,8 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
       {snap.phase === "finished" && (
         <div className="overlay">
           <div className="result-card">
-            <Karaage size={120} />
-            {snap.winnerSeat === seat ? (<><h2>唐揚げゲット！</h2><p>遠慮の塊、解消です。</p></>) : (<><h2>取られた…</h2><p>{winner?.name ?? "誰か"}（{snap.winnerSeat && SEAT_LABEL[snap.winnerSeat]}）の勝ち</p></>)}
+            {/* ゲット画面: 唐揚げイラストと見出しは無し、「今なら食べれそう！」だけ (デザイン指示) */}
+            {snap.winnerSeat === seat ? (<h2>今なら<br />食べれそう！</h2>) : (<><Karaage size={120} /><h2>取られた…</h2><p>{winner?.name ?? "誰か"}（{snap.winnerSeat && SEAT_LABEL[snap.winnerSeat]}）の勝ち</p></>)}
             <small>ホストが次のゲームを始めるのを待ってね</small>
           </div>
         </div>
