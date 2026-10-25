@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Mode, Phase, Plate, SEATS, SEAT_LABEL, SEAT_LETTER, Seat, Snapshot, roomFromUrl, useRoom } from "./api";
+import { Phase, Plate, SEATS, SEAT_LABEL, Seat, Snapshot, roomFromUrl, useRoom } from "./api";
 import "./stage.css";
 
 // /stage — プレゼン用 プロジェクター/観戦画面 (読み取り専用・操作なし・16:9 全画面)
@@ -8,8 +8,6 @@ import "./stage.css";
 
 const SEAT_XY: Record<Seat, [number, number]> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
 const SEAT_COLOR: Record<Seat, string> = { N: "#ff5a4e", E: "#ffd23f", S: "#4fd1ff", W: "#7dff8a" };
-const MODE_LABEL: Record<Mode, string> = { A: "A 実機", B: "B 磁石", C: "C 仮想" };
-const PHASE_LABEL: Record<Phase, string> = { lobby: "待機中", playing: "対戦中", finished: "決着" };
 
 // 他ジョブ (ひも切れ等) の型が main に無くても壊れないよう、必要な形だけダックタイピングで読む
 type MechSeat = { snapped?: boolean; snapRemainMs?: number; cooldownRemainMs?: number };
@@ -85,25 +83,21 @@ const fmtTime = (sec: number) => {
 
 export function Stage() {
   const code = roomFromUrl();
-  const { snap, connected } = useRoom(code, "viewer");
+  const { snap } = useRoom(code, "viewer");
   const clock = usePhaseClock(snap?.phase);
   useEffect(() => { document.title = `STAGE ${code} — 遠慮キラー`; }, [code]);
 
   return (
     <div className={`stg ${snap?.estop ? "stg-estop" : ""}`}>
-      {snap ? <StageView snap={snap} elapsed={clock.elapsed} /> : <div className="stg-loading">部屋 {code} に接続中…</div>}
+      {snap ? <StageView snap={snap} elapsed={clock.elapsed} /> : <div className="stg-loading">接続中…</div>}
       {snap && clock.flashing && <div className="stg-overlay stg-start"><div>START!</div></div>}
       {snap && snap.phase === "finished" && <ResultOverlay snap={snap} elapsed={clock.elapsed} />}
       {snap?.estop && <div className="stg-estop-banner">緊急停止中</div>}
-      <div className={`stg-conn ${connected ? "on" : ""}`}>
-        <span className="stg-dot" />{connected ? "LIVE" : "再接続中…"} · ROOM {code}
-        {snap && snap.mode !== "C" && <> · デバイス {snap.deviceWsCount || snap.deviceOnline ? "接続" : "未接続"}</>}
-      </div>
     </div>
   );
 }
 
-function ResultOverlay({ snap, elapsed }: { snap: Snapshot; elapsed: number | null }) {
+function ResultOverlay({ snap }: { snap: Snapshot; elapsed: number | null }) {
   const w = snap.winnerSeat;
   const p = w ? snap.seats[w] : undefined;
   return (
@@ -111,9 +105,7 @@ function ResultOverlay({ snap, elapsed }: { snap: Snapshot; elapsed: number | nu
       {w ? (
         <div className="stg-result-box" style={{ borderColor: SEAT_COLOR[w] }}>
           <div className="stg-result-sub">WINNER</div>
-          <div className="stg-result-seat" style={{ color: SEAT_COLOR[w] }}>{SEAT_LETTER[w]}（{SEAT_LABEL[w]}）</div>
-          <div className="stg-result-name">{p?.name ?? "???"}</div>
-          <div className="stg-result-msg">唐揚げゲット！🍗{elapsed != null && <span> {fmtTime(elapsed)}</span>}</div>
+          <div className="stg-result-name" style={{ color: SEAT_COLOR[w] }}>{p?.name ?? SEAT_LABEL[w]}</div>
         </div>
       ) : (
         <div className="stg-result-box"><div className="stg-result-name">終了</div></div>
@@ -139,7 +131,6 @@ function StageView({ snap, elapsed }: { snap: Snapshot; elapsed: number | null }
   const arrowLen = Math.min(0.9, r.mag * 0.7);
   const ax = r.mag > 0 ? plate.x + (r.fx / r.mag) * arrowLen : plate.x;
   const ay = r.mag > 0 ? plate.y + (r.fy / r.mag) * arrowLen : plate.y;
-  const turnLock = mech?.turnLock && mech.turnLock.remainMs > 0 ? mech.turnLock : null;
 
   return (
     // 16:9 の viewBox。卓半径 = 1。どの画面サイズでも全体が収まる (meet)
@@ -154,23 +145,9 @@ function StageView({ snap, elapsed }: { snap: Snapshot; elapsed: number | null }
         </marker>
       </defs>
 
-      {/* 左上: フェーズ + タイマー */}
+      {/* 左上: タイマーのみ */}
       <g transform="translate(-3.05 -1.52)">
-        <text className={`stg-phase ${snap.phase}`} x="0" y="0">{PHASE_LABEL[snap.phase]}</text>
-        <text className="stg-timer" x="0" y="0.48">{elapsed != null ? fmtTime(elapsed) : "--:--"}</text>
-      </g>
-      {/* 右上: モード */}
-      <g transform="translate(3.05 -1.52)">
-        <text className="stg-mode-cap" x="0" y="-0.04" textAnchor="end">MODE</text>
-        <text className="stg-mode" x="0" y="0.26" textAnchor="end">{MODE_LABEL[snap.mode]}</text>
-      </g>
-      {/* 左下: タイトル */}
-      <g transform="translate(-3.05 1.62)">
-        <text className="stg-title" x="0" y="0">遠慮キラー</text>
-      </g>
-      {/* 右下: 合力 */}
-      <g transform="translate(3.05 1.62)">
-        <text className="stg-force" x="0" y="0" textAnchor="end">{r.moving ? `合力 ${Math.round(r.mag * 100)}` : "拮抗中…"}</text>
+        <text className="stg-timer" x="0" y="0.2">{elapsed != null ? fmtTime(elapsed) : ""}</text>
       </g>
 
       {/* 卓 */}
@@ -211,13 +188,7 @@ function StageView({ snap, elapsed }: { snap: Snapshot; elapsed: number | null }
       {/* 席パネル */}
       {SEATS.map((s) => <SeatPanel key={s} seat={s} snap={snap} mech={mech} />)}
 
-      {turnLock && (
-        <g>
-          <rect x="-1.0" y="-0.17" width="2.0" height="0.34" rx="0.06" fill="#000000cc" stroke="#4fd1ff" strokeWidth="0.015" />
-          <text className="stg-banner" y="0.07" textAnchor="middle">旋回中… 引けない！ {(turnLock.remainMs / 1000).toFixed(1)}s</text>
-        </g>
-      )}
-      {snap.phase === "lobby" && !turnLock && (
+      {snap.phase === "lobby" && (
         <g>
           <rect x="-0.85" y="-0.15" width="1.7" height="0.3" rx="0.06" fill="#000000aa" />
           <text className="stg-banner" y="0.07" textAnchor="middle">まもなく開始</text>
@@ -244,7 +215,6 @@ function SeatPanel({ seat, snap, mech }: { seat: Seat; snap: Snapshot; mech: Mec
   const win = snap.winnerSeat === seat;
   const m = mech?.seats?.[seat];
   const snapped = !!m?.snapped;
-  const cooling = !snapped && (m?.cooldownRemainMs ?? 0) > 0;
   const big = seat === "E" || seat === "W";
   const pad = 0.06;
   const barH = big ? 0.22 : 0.13;
@@ -253,17 +223,12 @@ function SeatPanel({ seat, snap, mech }: { seat: Seat; snap: Snapshot; mech: Mec
     <g opacity={p ? 1 : 0.45}>
       <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="0.06"
         fill={lead || win ? `${col}33` : "#120d0a"} stroke={lead || win ? col : "#4a3a2e"} strokeWidth={lead || win ? 0.03 : 0.015} />
-      <text className="stg-seat-dir" x={b.x + pad} y={b.y + (big ? 0.22 : 0.19)} fill={col}>{SEAT_LETTER[seat]} {SEAT_LABEL[seat]}</text>
-      {lead && <text className="stg-seat-tag" x={b.x + b.w - pad} y={b.y + (big ? 0.22 : 0.19)} textAnchor="end" fill={col}>優勢!</text>}
-      <text className={`stg-seat-name ${big ? "big" : ""}`} x={b.x + pad} y={b.y + (big ? 0.6 : 0.39)}>{p ? clip(p.name, big ? 9 : 12) : "空席"}</text>
+      <text className="stg-seat-dir" x={b.x + pad} y={b.y + (big ? 0.22 : 0.19)} fill={col}>{SEAT_LABEL[seat]}</text>
+      <text className={`stg-seat-name ${big ? "big" : ""}`} x={b.x + pad} y={b.y + (big ? 0.6 : 0.39)}>{p ? clip(p.name, big ? 9 : 12) : ""}</text>
       {p && <>
         <rect x={b.x + pad} y={barY} width={b.w - pad * 2 - (big ? 0 : 0.42)} height={barH} rx={barH / 2} fill="#ffffff1a" />
-        <rect x={b.x + pad} y={barY} width={(b.w - pad * 2 - (big ? 0 : 0.42)) * t} height={barH} rx={barH / 2} fill={snapped ? "#ff3b30" : col} />
-        <text className="stg-seat-pct" x={b.x + b.w - pad} y={big ? barY - 0.05 : barY + barH} textAnchor="end">{Math.round(t * 100)}</text>
+        <rect x={b.x + pad} y={barY} width={(b.w - pad * 2) * t} height={barH} rx={barH / 2} fill={snapped ? "#ff3b30" : col} />
       </>}
-      {p && !p.online && <text className="stg-seat-tag" x={b.x + b.w - pad} y={b.y + (big ? 0.6 : 0.39)} textAnchor="end" fill="#aaa">オフライン</text>}
-      {snapped && <text className="stg-seat-alert" x={b.x + b.w / 2} y={b.y + b.h / 2 + 0.08} textAnchor="middle">ひも切れ！{m?.snapRemainMs ? ` ${(m.snapRemainMs / 1000).toFixed(1)}s` : ""}</text>}
-      {cooling && <text className="stg-seat-tag" x={b.x + b.w - pad} y={b.y + (big ? 0.6 : 0.39)} textAnchor="end" fill="#9ad">クールタイム</text>}
     </g>
   );
 }
