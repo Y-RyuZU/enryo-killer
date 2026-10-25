@@ -145,11 +145,11 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
           </g>
           <circle cy="4" r="44" fill="transparent" />
         </g>
-        {/* ひも切れポップアップ: 紐に被らないよう結び目の下に。#BE0218 / 枠線なし / 「紐が切れた！」のみ (デザイン指示) */}
+        {/* ひも切れポップアップ (サイズ2倍, viewBox幅200をはみ出すので svg は overflow:visible): 紐に被らないよう結び目の下に。#BE0218 / 枠線なし / 「紐が切れた！」のみ (デザイン指示) */}
         {snapped && (
-          <g className="snap-pop" transform={`translate(100 ${handleY + 46})`} pointerEvents="none">
-            <rect x="-62" y="-17" width="124" height="34" rx="8" fill="#BE0218" />
-            <text x="0" y="1" textAnchor="middle" dominantBaseline="middle" fontSize="16" fontWeight="800" fill="#fff">紐が切れた！</text>
+          <g className="snap-pop" transform={`translate(100 ${handleY + 62})`} pointerEvents="none">
+            <rect x="-124" y="-34" width="248" height="68" rx="16" fill="#BE0218" />
+            <text x="0" y="2" textAnchor="middle" dominantBaseline="middle" fontSize="32" fontWeight="800" fill="#fff">紐が切れた！</text>
           </g>
         )}
         {/* 「こっそり引っ張る」ヒントは非表示 (デザイン指示) */}
