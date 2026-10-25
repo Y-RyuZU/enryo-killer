@@ -101,7 +101,6 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
   const statusText = { waiting: snap.phase === "lobby" ? "待機中…" : snap.phase === "playing" ? "拮抗中…" : "決着", winning: "勝ってる！", losing: "負けてる…" }[status];
   const handleY = 300 + drag;
   const shake = power > 0.6 ? (Math.random() - 0.5) * power * 6 : 0;
-  const winner = snap.winnerSeat ? snap.seats[snap.winnerSeat] : undefined;
   // ゲームルール: ひも切れ / 旋回ロック / クールタイム
   const left = useNowSince(snap);
   const mm = snap.phase === "playing" ? snap.mech?.seats[seat] : undefined;
@@ -152,11 +151,12 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
 
       <div className={`gauge ${snapped || turning || cooling ? "off" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : ""}</span></div>
 
-      {snap.phase === "finished" && (
+      {/* 負けた側の「取られた…」画面は無し (ゲームの趣旨と違うのでデザイン指示で削除)。勝った人だけ結果を出す */}
+      {snap.phase === "finished" && snap.winnerSeat === seat && (
         <div className="overlay">
           <div className="result-card">
             {/* ゲット画面: 唐揚げイラストと見出しは無し、「今なら食べれそう！」だけ (デザイン指示) */}
-            {snap.winnerSeat === seat ? (<h2>今なら<br />食べれそう！</h2>) : (<><Karaage size={120} /><h2>取られた…</h2><p>{winner?.name ?? "誰か"}（{snap.winnerSeat && SEAT_LABEL[snap.winnerSeat]}）の勝ち</p></>)}
+            <h2>今なら<br />食べれそう！</h2>
             <small>ホストが次のゲームを始めるのを待ってね</small>
           </div>
         </div>
