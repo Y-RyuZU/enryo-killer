@@ -111,17 +111,14 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
   const turning = turnLeft > 0;
   const cdLeft = left(mm?.cooldownRemainMs);
   const cooling = !snapped && !turning && cdLeft > 0;
-  const danger = !snapped && (mm?.overMs ?? 0) > 0; // 強く引きすぎ (このままだと切れる)
 
   return (
     <div className={`m-screen rope-screen st-${status} ${snapped ? "is-snapped" : ""} ${turning ? "is-turning" : ""}`}>
-      {/* 上部のチップ・ミニマップ・状態ピルは非表示 (デザイン指示) / クールタイム表記もスマホでは出さない */}
+      {/* 上部のチップ・ミニマップ・状態ピルは非表示 (デザイン指示) / クールタイム表記・引きすぎ警告もスマホでは出さない */}
       {snapped ? (
         <div className="mech-banner snapped">✂ ひもが切れた！<b>復活まで {secs(snapLeft)}s</b></div>
       ) : turning ? (
         <div className="mech-banner turning">↻ 旋回中… <b>いまは引けない</b></div>
-      ) : danger ? (
-        <div className="mech-banner danger">⚠ 引きすぎ！ 切れるよ</div>
       ) : null}
 
       <svg ref={svgRef} className="rope-svg" viewBox="0 0 200 640" preserveAspectRatio="xMidYMin meet"
@@ -153,7 +150,7 @@ export function Rope({ snap, seat, send, connected, title, onTitleClick }: { sna
         {/* 「こっそり引っ張る」ヒントは非表示 (デザイン指示) */}
       </svg>
 
-      <div className={`gauge ${snapped || turning || cooling ? "off" : ""} ${danger ? "danger" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : ""}</span></div>
+      <div className={`gauge ${snapped || turning || cooling ? "off" : ""}`}><div className="gauge-fill" style={{ width: `${power * 100}%` }} /><span>引く力 {Math.round(power * 100)}%{snapped ? "（切れてる）" : turning ? "（旋回中）" : ""}</span></div>
 
       {snap.phase === "finished" && (
         <div className="overlay">
